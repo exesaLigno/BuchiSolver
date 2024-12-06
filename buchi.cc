@@ -1,0 +1,1093 @@
+#include "ref_ptr.h"
+
+#include <cassert>
+#include <cstddef>
+
+#include <algorithm>
+#include <memory>
+#include <string>
+#include <vector>
+#include <cmath>
+
+enum class Operator : uint8_t
+{
+    TRUE,
+    FALSE,
+    ATOM,
+    UNARY_FIRST,
+    NOT = UNARY_FIRST,
+    X,
+    F,
+    G,
+    BINARY_FIRST,
+    AND = BINARY_FIRST,
+    OR,
+    IMPL,
+    U,
+    W,
+    R
+};
+
+enum class Status : uint8_t
+{
+    UNKNOWN, TRUE, FALSE
+};
+
+static const struct
+{
+    char sym;
+    Operator opc;
+} opcodes[] = {
+    {'!', Operator::NOT},
+    {'&', Operator::AND},
+    {'|', Operator::OR},
+    {'U', Operator::U},
+    {'F', Operator::F},
+    {'G', Operator::G},
+    {'R', Operator::R},
+    {'W', Operator::W},
+    {'X', Operator::X}};
+
+static char symbol_of(Operator opc)
+{
+    for (const auto &item : opcodes)
+    {
+        if (item.opc == opc)
+        {
+            return item.sym;
+        }
+    }
+    return '\0';
+}
+
+static Operator opcode_of(char c)
+{
+    for (const auto &item : opcodes)
+    {
+        if (item.sym == c)
+        {
+            return static_cast<Operator>(item.opc);
+        }
+    }
+    return Operator::FALSE;
+}
+
+template<class T>
+void add_if_not_presented(std::vector<T*>& vector, T* to_add)
+{
+    for (auto ltl : vector)
+    {
+        if (*to_add == *ltl)
+            return;
+    }
+
+    vector.push_back(to_add);
+}
+
+template<class T>
+int find_if_presented(const std::vector<T>& vector, const T to_found)
+{
+    for (int i = 0; i < vector.size(); i++)
+    {
+        if (*to_found == *(vector[i]))
+            return i;
+    }
+
+    return -1;
+}
+
+class Ltl
+{
+    friend void ref_ptr_inc_ref(Ltl &);
+    friend void ref_ptr_release(Ltl &);
+
+public:
+    using ref_type = ref_ptr<Ltl>;
+
+    static ref_type True()
+    {
+        static const ref_type ltl_true = new Ltl(Operator::TRUE);
+        return ltl_true;
+    }
+
+    static ref_type False()
+    {
+        static const ref_type ltl_false = new Ltl(Operator::FALSE);
+        return ltl_false;
+    }
+
+    static ref_type atom(std::string name)
+    {
+        return new Ltl(std::move(name));
+    }
+
+    static ref_type unary(Operator opc, const ref_type &opnd)
+    {
+        ref_type ltl = new Ltl(opc);
+        ltl->lop = opnd;
+
+        return ltl;
+    }
+
+    static ref_type binary(Operator opc, const ref_type &lop, const ref_type &rop)
+    {
+        ref_type ltl = new Ltl(opc);
+        ltl->lop = lop;
+        ltl->rop = rop;
+
+        return ltl;
+    }
+
+    Operator kind() const
+    {
+        return opc;
+    }
+
+    const Ltl *lhs() const
+    {
+        return lop.get();
+    }
+
+    const Ltl *rhs() const
+    {
+        return rop.get();
+    }
+
+    void to_string(std::string &s) const
+    {
+        switch (opc)
+        {
+            case Operator::TRUE:
+                s.append("true");
+                break;
+            case Operator::FALSE:
+                s.append("false");
+                break;
+            case Operator::ATOM:
+                s.append(name);
+                break;
+
+            case Operator::IMPL:
+                s.push_back('(');
+                lop->to_string(s);
+                s.append(" -> ");
+                rop->to_string(s);
+                s.push_back(')');
+                break;
+
+            case Operator::NOT:
+            case Operator::G:
+            case Operator::F:
+            case Operator::X:
+                s.push_back(symbol_of(opc));
+                lop->to_string(s);
+                break;
+
+            case Operator::AND:
+            case Operator::OR:
+            case Operator::U:
+            case Operator::R:
+            case Operator::W:
+                s.push_back('(');
+                lop->to_string(s);
+                s.push_back(' ');
+                s.push_back(symbol_of(opc));
+                s.push_back(' ');
+                rop->to_string(s);
+                s.push_back(')');
+                break;
+        }
+    }
+
+    std::string to_latex_string()
+    {
+        std::string s;
+
+        switch (opc)
+        {
+            case Operator::TRUE:
+                s.append("\\TRUE");
+                break;
+            case Operator::FALSE:
+                s.append("\\FALSE");
+                break;
+            case Operator::ATOM:
+                s.append(name);
+                break;
+
+            case Operator::IMPL:
+                s.push_back('(');
+                s.append(lop->to_latex_string());
+                s.append(" \\IMPL ");
+                s.append(rop->to_latex_string());
+                s.push_back(')');
+                break;
+
+            case Operator::NOT:
+                s.append("\\NOT ");
+                s.append(lop->to_latex_string());
+                break;
+
+            case Operator::G:
+                s.append("\\GLOBALLY ");
+                s.append(lop->to_latex_string());
+                break;
+
+            case Operator::F:
+                s.append("\\FUTURE ");
+                s.append(lop->to_latex_string());
+                break;
+
+            case Operator::X:
+                s.append("\\NEXT ");
+                s.append(lop->to_latex_string());
+                break;
+
+            case Operator::AND:
+                s.push_back('(');
+                s.append(lop->to_latex_string());
+                s.append(" \\AND ");
+                s.append(rop->to_latex_string());
+                s.push_back(')');
+                break;
+
+            case Operator::OR:
+                s.push_back('(');
+                s.append(lop->to_latex_string());
+                s.append(" \\OR ");
+                s.append(rop->to_latex_string());
+                s.push_back(')');
+                break;
+
+            case Operator::U:
+                s.push_back('(');
+                s.append(lop->to_latex_string());
+                s.append(" \\UNTIL ");
+                s.append(rop->to_latex_string());
+                s.push_back(')');
+                break;
+
+            case Operator::R:
+                s.push_back('(');
+                s.append(lop->to_latex_string());
+                s.append(" \\RELEASE ");
+                s.append(rop->to_latex_string());
+                s.push_back(')');
+                break;
+
+            case Operator::W:
+                s.push_back('(');
+                s.append(lop->to_latex_string());
+                s.append(" \\WEAK ");
+                s.append(rop->to_latex_string());
+                s.push_back(')');
+                break;
+        }
+
+        return s;
+    }
+
+    std::string node_to_string() const
+    {
+        switch (opc)
+        {
+            case Operator::TRUE: return "true";
+            case Operator::FALSE: return "false";
+            case Operator::ATOM: return name;
+            case Operator::IMPL: return "{→|implication}";
+            case Operator::NOT: return "{!|not}";
+            case Operator::G: return "{G|globally}";
+            case Operator::F: return "{F|future}";
+            case Operator::X: return "{X|next}";
+            case Operator::AND: return "{&|and}";
+            case Operator::OR: return "{\\||or}";
+            case Operator::U: return "{U|until}";
+            case Operator::R: return "{R|release}";
+            case Operator::W: return "{W|weak until}";
+            default: return "{|UNKNOWN|}";
+        }
+    }
+
+    void dump_to(FILE *f) const
+    {
+        fprintf(f, "digraph G {\n");
+        recursive_dump_to(f);
+        fprintf(f, "}");
+    }
+
+    bool operator==(const Ltl& other) const
+    {
+        return (kind() == other.kind() && (kind() != Operator::ATOM || name == other.name)) && 
+            ((!lhs() && !other.lhs()) || (lhs() && other.lhs() && *lhs() == *other.lhs())) &&
+            ((!rhs() && !other.rhs()) || (rhs() && other.rhs() && *rhs() == *other.rhs()));
+    }
+
+    Status calculate(const std::vector<const Ltl*>& all, std::vector<Status>& all_mask) const
+    {
+        #define SET_AND_RETURN(status) { all_mask[mask_idx] = status; return status; }
+
+        int mask_idx;
+        for (mask_idx = 0; mask_idx < all.size(); mask_idx++)
+        {
+            if (*this == *(all[mask_idx]))
+                break;
+        }
+
+        if (all_mask[mask_idx] != Status::UNKNOWN)
+            return all_mask[mask_idx];
+
+        auto l_status = lhs() ? lhs()->calculate(all, all_mask) : Status::UNKNOWN;
+        auto r_status = rhs() ? rhs()->calculate(all, all_mask) : Status::UNKNOWN;
+
+        switch (kind())
+        {
+            case Operator::TRUE:
+                SET_AND_RETURN(Status::TRUE)
+
+            case Operator::FALSE: 
+                SET_AND_RETURN(Status::FALSE)
+
+            case Operator::NOT:
+                switch (l_status)
+                {
+                    case Status::TRUE: SET_AND_RETURN(Status::FALSE)
+                    case Status::FALSE: SET_AND_RETURN(Status::TRUE)
+                    default: SET_AND_RETURN(Status::UNKNOWN)
+                }
+
+            case Operator::AND:
+                if (l_status == Status::TRUE && r_status == Status::TRUE)
+                    SET_AND_RETURN(Status::TRUE)
+                else if (l_status == Status::FALSE || r_status == Status::FALSE)
+                    SET_AND_RETURN(Status::FALSE)
+                else
+                    SET_AND_RETURN(Status::UNKNOWN)
+
+            case Operator::OR:
+                if (l_status == Status::TRUE || r_status == Status::TRUE)
+                    SET_AND_RETURN(Status::TRUE)
+                else if (l_status == Status::FALSE && r_status == Status::FALSE)
+                    SET_AND_RETURN(Status::FALSE)
+                else
+                    SET_AND_RETURN(Status::UNKNOWN)
+
+            case Operator::IMPL:
+                if (l_status == Status::FALSE || r_status == Status::TRUE)
+                    SET_AND_RETURN(Status::TRUE)
+                else if (l_status == Status::TRUE && r_status == Status::FALSE)
+                    SET_AND_RETURN(Status::FALSE)
+                else
+                    SET_AND_RETURN(Status::UNKNOWN)
+
+            case Operator::U:
+                if (r_status == Status::TRUE)
+                    SET_AND_RETURN(Status::TRUE)
+                else if (l_status == Status::FALSE && r_status == Status::FALSE)
+                    SET_AND_RETURN(Status::FALSE)
+                else
+                    SET_AND_RETURN(Status::UNKNOWN)
+
+            case Operator::F:
+                if (l_status == Status::TRUE)
+                    SET_AND_RETURN(Status::TRUE)
+                else
+                    SET_AND_RETURN(Status::UNKNOWN)
+
+            case Operator::G:
+                if (l_status == Status::FALSE)
+                    SET_AND_RETURN(Status::FALSE)
+                else
+                    SET_AND_RETURN(Status::UNKNOWN)
+
+            // [TODO] INCORRECT
+            case Operator::W:
+                printf("Can not calc W\n");
+                SET_AND_RETURN(Status::UNKNOWN)
+            
+            // [TODO] INCORRECT
+            case Operator::R:
+                printf("Can not calc R\n");
+                SET_AND_RETURN(Status::UNKNOWN)
+
+            case Operator::ATOM:
+            case Operator::X:
+            default:
+                printf("UNREACHABLE CODE!\n");
+                SET_AND_RETURN(Status::UNKNOWN)
+        }
+    }
+
+    bool introduce_X()
+    {
+        bool changed = false;
+
+        if (kind() == Operator::X)
+        {
+            auto arg = lop;
+
+            switch (arg->kind())
+            {
+                // true or false
+                case Operator::TRUE:
+                case Operator::FALSE:
+                    changed = true;
+                    opc = arg->kind();
+                    lop = nullptr;
+                    rop = nullptr;
+                    break;
+
+                // unary operators
+                case Operator::NOT:
+                case Operator::F:
+                case Operator::G:
+                    changed = true;
+                    opc = arg->kind();
+                    arg->opc = Operator::X;
+                    break;
+
+                // binary operators
+                case Operator::AND:
+                case Operator::OR:
+                case Operator::IMPL:
+                case Operator::U:
+                case Operator::W:
+                case Operator::R:
+                    changed = true;
+                    opc = arg->kind();
+                    lop = unary(Operator::X, arg->lop);
+                    rop = unary(Operator::X, arg->rop);
+                    arg->lop = nullptr;
+                    arg->rop = nullptr;
+                    break;
+            }
+        }
+
+        if (lhs())
+            changed |= lop->introduce_X();
+        if (rhs())
+            changed |= rop->introduce_X();
+
+        return changed;
+    }
+
+    bool substitute_R()
+    {
+        bool changed = false;
+
+        if (kind() == Operator::R)
+        {
+            changed = True;
+            opc = Operator::NOT;
+            lop = binary(Operator::U, unary(Operator::NOT, lop), unary(Operator::NOT, rop));
+            rop = nullptr;
+        }
+
+        if (lhs())
+            changed |= lop->substitute_R();
+        if (rhs())
+            changed |= rop->substitute_R();
+        
+        return changed;
+    }
+
+    bool substitute_W()
+    {
+        bool changed = false;
+
+        if (kind() == Operator::W)
+        {
+            changed = True;
+            opc = Operator::OR;
+            auto new_lop = binary(Operator::U, lop, rop);
+            auto new_rop = unary(Operator::G, lop);
+            lop = new_lop;
+            rop = new_rop;
+        }
+
+        if (lhs())
+            changed |= lop->substitute_W();
+        if (rhs())
+            changed |= rop->substitute_W();
+        
+        return changed;
+    }
+
+    bool substitute_G()
+    {
+        bool changed = false;
+
+        if (kind() == Operator::G)
+        {
+            changed = True;
+            opc = Operator::NOT;
+            lop = unary(Operator::F, unary(Operator::NOT, lop));
+        }
+
+        if (lhs())
+            changed |= lop->substitute_G();
+        if (rhs()) 
+            changed |= rop->substitute_G();
+
+        return changed;
+    }
+
+    bool substitute_F()
+    {
+        bool changed = false;
+
+        if (kind() == Operator::F)
+        {
+            changed = True;
+            opc = Operator::U;
+            rop = lop;
+            lop = True();
+        }
+
+        if (lhs())
+            changed |= lop->substitute_F();
+        if (rhs())
+            changed |= rop->substitute_F();
+
+        return changed;
+    }
+
+private:
+    Ltl(std::string _name)
+    {
+        nref = 0;
+        opc = Operator::ATOM;
+        name = std::move(_name);
+        lop = nullptr;
+        rop = nullptr;
+    }
+
+    Ltl(Operator _opc)
+    {
+        nref = 0;
+        opc = _opc;
+        lop = nullptr;
+        rop = nullptr;
+    }
+
+    Ltl(const Ltl &) = delete;
+    void operator=(const Ltl &) = delete;
+
+    void recursive_dump_to(FILE *f) const
+    {
+        fprintf(f, "\taddr%p[label=", this);
+
+        fprintf(f, "\"{%s|{kind = %d}}\"", node_to_string().c_str(), kind());
+
+        fprintf(f, ", shape=\"record\"]\n");
+
+        if (lhs())
+        {
+            lhs()->recursive_dump_to(f);
+            fprintf(f, "\taddr%p -> addr%p[label=\".lhs\"]\n", this, lhs());
+        }
+
+        if (rhs())
+        {
+            rhs()->recursive_dump_to(f);
+            fprintf(f, "\taddr%p -> addr%p[label=\".rhs\"]\n", this, rhs());
+        }
+    }
+
+    int nref;
+    Operator opc;
+    std::string name;
+    ref_type lop, rop;
+    std::vector<const Ltl*> untils;
+};
+
+void ref_ptr_inc_ref(Ltl &x)
+{
+    ++x.nref;
+}
+
+void ref_ptr_release(Ltl &x)
+{
+    --x.nref;
+    if (x.nref <= 0)
+    {
+        delete &x;
+    }
+}
+
+class Parser
+{
+    const char *stream;
+    std::vector<ref_ptr<Ltl>> stack;
+
+public:
+    ref_ptr<Ltl> parse(const char *s)
+    {
+        stream = s;
+        parse_until('\0');
+
+        assert(stack.size() == 1);
+        ref_ptr<Ltl> ltl = stack.back();
+        stack.pop_back();
+
+        return ltl;
+    }
+
+private:
+    void parse_until(char endsym)
+    {
+        char c = *stream;
+        while (c && c != endsym)
+        {
+            parse_term();
+            c = *stream;
+        }
+        assert(c == endsym && "invalid end of stream");
+
+        if (c && c == endsym)
+        {
+            ++stream;
+        }
+    }
+
+    void skip_empty()
+    {
+        const char *s = stream;
+        while (*s && isspace(*s))
+        {
+            ++s;
+        }
+        stream = s;
+    }
+
+    ref_ptr<Ltl> parse_atom()
+    {
+        const char *end = stream;
+        while (*end && islower(*end))
+        {
+            ++end;
+        }
+        assert(stream < end && "invalid atom token");
+
+        std::string name(stream, end);
+        stream = end;
+
+        if (name == "true")
+        {
+            return Ltl::True();
+        }
+        if (name == "false")
+        {
+            return Ltl::False();
+        }
+        return Ltl::atom(std::move(name));
+    }
+
+    void parse_term()
+    {
+        skip_empty();
+
+        const char c = *stream;
+        switch (c)
+        {
+            default:
+                stack.push_back(parse_atom());
+                break;
+
+            case '!':
+            case 'X':
+            case 'F':
+            case 'G':
+                ++stream;
+                parse1(opcode_of(c));
+                break;
+
+            case '&':
+            case '|':
+            case 'U':
+            case 'R':
+            case 'W':
+                ++stream;
+                parse2(opcode_of(c));
+                break;
+
+            case '-':
+                assert(stream[1] == '>' && "invalid token");
+                stream += 2;
+                parse2(Operator::IMPL);
+                break;
+
+            case '(':
+                ++stream;
+                parse_until(')');
+                break;
+
+            case ')':
+                break;
+        }
+    }
+
+    void parse1(Operator opc)
+    {
+        parse_term();
+        ref_ptr<Ltl> ltl = pop();
+        stack.push_back(Ltl::unary(opc, ltl));
+    }
+
+    void parse2(Operator opc)
+    {
+        parse_term();
+        ref_ptr<Ltl> rop = pop();
+        ref_ptr<Ltl> lop = pop();
+        stack.push_back(Ltl::binary(opc, lop, rop));
+    }
+
+    ref_ptr<Ltl> pop()
+    {
+        ref_ptr<Ltl> ltl = stack.back();
+        stack.pop_back();
+        return ltl;
+    }
+};
+
+class Automaton
+{
+    using index_vec_type = std::vector<size_t>;
+
+    std::vector<index_vec_type> adjacent;
+    std::vector<index_vec_type> accepting;
+    index_vec_type initial;
+
+public:
+    Automaton(const Automaton &) = delete;
+    Automaton &operator=(const Automaton &) = delete;
+
+    /// Init automaton for a given number of states
+    Automaton(size_t card)
+    {
+        adjacent.resize(card);
+    }
+
+    void add_transition(size_t src, size_t dst)
+    {
+        adjacent[src].push_back(dst);
+    }
+
+    void mark_init(size_t state)
+    {
+        assert(state < adjacent.size() && "invalid state number");
+        initial.push_back(state);
+    }
+
+    void mark_accept(size_t set, size_t state)
+    {
+        assert(state < adjacent.size() && "invalid state number");
+        if (set >= accepting.size())
+        {
+            accepting.resize(set + 1);
+        }
+        accepting[set].push_back(state);
+    }
+
+    void finalize()
+    {
+        for (index_vec_type &values : adjacent)
+        {
+            deduplicate(values);
+        }
+        for (index_vec_type &values : accepting)
+        {
+            deduplicate(values);
+        }
+        deduplicate(initial);
+    }
+
+    void write_to(FILE *f) const
+    {
+        fprintf(f, "%zu %zu\n", adjacent.size(), accepting.size());
+        write_set_to(f, initial);
+        for (const index_vec_type &accepting_set : accepting)
+        {
+            write_set_to(f, accepting_set);
+        }
+
+        size_t i = 0;
+        for (const index_vec_type &transitions : adjacent)
+        {
+            write_set_to(f, transitions);
+            ++i;
+        }
+    }
+
+    size_t card() const
+    {
+        return adjacent.size();
+    }
+
+private:
+    static void write_set_to(FILE *f, const index_vec_type &values)
+    {
+        fprintf(f, "%zu ", values.size());
+        for (size_t v : values)
+        {
+            fprintf(f, "%zu ", v);
+        }
+        fputs("\n", f);
+    }
+
+    static void deduplicate(index_vec_type &values)
+    {
+        std::sort(values.begin(), values.end());
+        index_vec_type::iterator it =
+            std::unique(values.begin(), values.end());
+        values.erase(it, values.end());
+    }
+};
+
+bool iterate_mask(std::vector<bool>& atoms_mask, const int mask_size)
+{
+    if (atoms_mask.size() == 0)
+    {
+        for (int i = 0; i < mask_size; i++)
+            atoms_mask.push_back(false);
+
+        return true; // We can enter current iteration
+    }
+
+    bool IS = true; // Iterate from start
+
+    for (int i = IS ? 0 : (mask_size - 1); IS ? (i < mask_size) : (i >= 0); i += IS ? 1 : -1)
+    {
+        if (!atoms_mask[i])
+        {
+            atoms_mask[i] = true;
+
+            for (int j = IS ? (i - 1) : (i + 1); IS ? (j >= 0) : (j < mask_size); j += IS ? -1 : 1)
+                atoms_mask[j] = false;
+
+            return true; // Found `false` in mask and iterated (010011 -> 010100), so can enter iteration
+        }
+    }
+
+    return false; // All states already checked, we can't enter iteration
+}
+
+void get_atoms(const Ltl* ltl, std::vector<const Ltl*>& atoms)
+{
+    if (ltl->lhs())
+        get_atoms(ltl->lhs(), atoms);
+
+    if (ltl->rhs())
+        get_atoms(ltl->rhs(), atoms);
+
+    if (ltl->kind() == Operator::X || ltl->kind() == Operator::ATOM)
+        add_if_not_presented(atoms, ltl);
+}
+
+void get_all(const Ltl* ltl, std::vector<const Ltl*>& all)
+{
+    if (ltl->lhs())
+        get_all(ltl->lhs(), all);
+
+    if (ltl->rhs())
+        get_all(ltl->rhs(), all);
+
+    add_if_not_presented(all, ltl);
+}
+
+static void transform_ltl(ref_ptr<Ltl>& ltl, bool output = true)
+{
+    if (output)
+    {
+        fprintf(stdout, "\tПреобразуем исходную формулу\n");
+        fprintf(stdout, "\t$$\\varphi = %s", ltl->to_latex_string().c_str());
+    }
+    if (ltl->introduce_X() && output)
+        fprintf(stdout, " = \\text{/ Заносим X внутрь операторов /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
+    if (ltl->substitute_R() && output)
+        fprintf(stdout, " = \\text{/ Выражаем R через U /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
+    if (ltl->substitute_W() && output)
+        fprintf(stdout, " = \\text{/ Выражаем W через U и G /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
+    if (ltl->substitute_G() && output)
+        fprintf(stdout, " = \\text{/ Выражаем G через F /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
+    if (ltl->substitute_F() && output)
+        fprintf(stdout, " = \\text{/ Выражаем F через U /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
+    if (output)
+        fprintf(stdout, "$$\n");
+}
+
+static void add_state(const ref_ptr<Ltl>& ltl, const std::vector<const Ltl*>& all, std::vector<Status> all_mask, std::vector<std::vector<Status>>& states)
+{
+    Status result = ltl->calculate(all, all_mask);
+
+    int unknown_until_idx = -1;
+    for (int i = 0; i < all.size(); i++)
+    {
+        if (all_mask[i] == Status::UNKNOWN)
+        {
+            unknown_until_idx = i;
+            break;
+        }
+    }
+
+    if (unknown_until_idx >= 0)
+    {
+        all_mask[unknown_until_idx] = Status::FALSE;
+        add_state(ltl, all, all_mask, states);
+        all_mask[unknown_until_idx] = Status::TRUE;
+        add_state(ltl, all, all_mask, states);
+    }
+
+    else
+        states.push_back(all_mask);
+}
+
+static bool check_edge_rules(const std::vector<const Ltl*>& all, const std::vector<std::vector<Status>>& states, const int from, const int to)
+{
+    for (auto a : all)
+    {
+        if (a->kind() == Operator::U)
+        {
+            int u_idx = find_if_presented(all, a);
+            int u_lhs_idx = find_if_presented(all, a->lhs());
+            int u_rhs_idx = find_if_presented(all, a->rhs());
+
+            if (!(
+                (states[from][u_idx] == Status::TRUE && states[from][u_rhs_idx] == Status::TRUE) ||  // p U q === true, q === true -> any succesor possible
+                (states[from][u_idx] == Status::FALSE && states[from][u_lhs_idx] == Status::FALSE && states[from][u_rhs_idx] == Status::FALSE) ||  // if p U q === false, and p, q === 0 -> any succesor possible
+                (states[from][u_lhs_idx] == Status::TRUE && states[from][u_rhs_idx] == Status::FALSE && states[from][u_idx] == states[to][u_idx])  // if p === 1, q === 0 -> successor must have p U q same as prdecessor
+            ))
+                return false;
+        }
+        else if (a->kind() == Operator::X)
+        {
+            int x_idx = find_if_presented(all, a);
+            int x_var_idx = find_if_presented(all, a->lhs());
+
+            if (!(
+                states[from][x_idx] == states[to][x_var_idx]
+            ))
+                return false;
+        }
+    }
+
+    return true;
+}
+
+static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
+{
+    Parser parser;
+    ref_ptr<Ltl> ltl = parser.parse(text);
+
+    FILE* f = fopen("ltl_before_transform.dot", "w");
+    ltl->dump_to(f);
+    fclose(f);
+
+    transform_ltl(ltl);
+
+    f = fopen("ltl_after_transform.dot", "w");
+    ltl->dump_to(f);
+    fclose(f);
+
+    std::vector<const Ltl*> atoms;
+    std::vector<bool> atoms_mask;
+    std::vector<const Ltl*> all;
+    std::vector<std::vector<Status>> states;
+
+    get_atoms(ltl.get(), atoms);
+    get_all(ltl.get(), all);
+
+    while (iterate_mask(atoms_mask, atoms.size()))
+    {
+        std::vector<Status> all_mask;
+        for (auto cur_ltl : all)
+        {
+            int found = find_if_presented(atoms, cur_ltl);
+            if (found >= 0)
+                all_mask.push_back(atoms_mask[found] ? Status::TRUE : Status::FALSE);
+            else
+                all_mask.push_back(Status::UNKNOWN);
+        }
+
+        add_state(ltl, all, all_mask, states);
+    }
+
+    printf("States count is %d (%d atoms variants)\n", states.size(), (int)std::pow(2, atoms.size()));
+
+    std::unique_ptr<Automaton> maton(new Automaton(states.size()));// = new Automaton(states.size());
+
+    int c = 1;
+    for (int i = 0; i < states.size(); i++)
+    {
+        if (states[i].back() == Status::TRUE)
+            maton->mark_init(i);
+
+        std::string set;
+        for (int j = 0; j < states[i].size(); j++)
+        {
+            if (states[i][j] == Status::TRUE)
+            {
+                if (!set.empty())
+                    set.append(", ");
+                
+                std::string tmp;
+                all[j]->to_string(tmp);
+                set.append(tmp);
+            }
+        }
+        printf("s_%d: {%s}\n", i, set.c_str());
+    }
+
+    int set_no = 0;
+    for (auto l : all)
+    {
+        if (l->kind() == Operator::U || 
+            l->kind() == Operator::F ||
+            l->kind() == Operator::G ||
+            l->kind() == Operator::R ||
+            l->kind() == Operator::W)
+        {
+            auto right = (l->kind() == Operator::F || l->kind() == Operator::G) ? l->lhs() : l->rhs();
+            int u_idx = find_if_presented(all, l);
+            int u_rhs_idx = find_if_presented(all, right);
+
+            for (int i = 0; i < states.size(); i++)
+            {
+                if (states[i][u_idx] == states[i][u_rhs_idx])
+                    maton->mark_accept(set_no, i);
+            }
+
+            set_no++;
+        }
+    }
+
+    for (int from = 0; from < states.size(); from++)
+    {
+        for (int to = 0; to < states.size(); to++)
+        {
+            if (check_edge_rules(all, states, from, to))
+                maton->add_transition(from, to);
+        }
+    }
+
+    //maton->write_to(stdout);
+
+    // std::string f;
+    // ltl->to_string(f);
+    // fputs(f.c_str(), stderr);
+    
+    return maton;
+}
+
+int main(int argc, char *argv[])
+{
+    std::unique_ptr<Automaton> buchi;
+    for (int i = 1; i < argc; ++i)
+    {
+        buchi = run_ltl_to_buchi(argv[i]);
+        if (buchi)
+        {
+            buchi->write_to(stdout);
+        }
+    }
+    return 0;
+}

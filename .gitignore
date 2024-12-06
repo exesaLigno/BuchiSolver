@@ -1,0 +1,4 @@
+buchi
+*.out
+*.dot
+.vscode
