@@ -48,6 +48,25 @@ static const struct
     {'W', Operator::W},
     {'X', Operator::X}};
 
+static const std::string DEFINITION_NAMES[] = {
+    "\\alpha",
+    "\\beta",
+    "\\gamma",
+    "\\delta",
+    "\\varepsilon",
+    "\\zeta",
+    "\\eta",
+    "\\vartheta",
+    "\\mu",
+    "\\nu",
+    "\\xi",
+    "\\rho",
+    "\\sigma",
+    "\\chi",
+    "\\psi",
+    "\\omega"
+};
+
 static char symbol_of(Operator opc)
 {
     for (const auto &item : opcodes)
@@ -199,7 +218,18 @@ public:
         }
     }
 
-    std::string to_latex_string()
+    void find_untils(std::vector<const Ltl*>& untils) const
+    {
+        if (lhs())
+            lhs()->find_untils(untils);
+        if (rhs())
+            rhs()->find_untils(untils);
+
+        if (kind() == Operator::U)
+            add_if_not_presented(untils, this);
+    }
+
+    std::string to_latex_string(std::vector<const Ltl*> definitions = std::vector<const Ltl*>(), const Ltl* new_definition = nullptr)
     {
         std::string s;
 
@@ -260,12 +290,20 @@ public:
                 break;
 
             case Operator::U:
-                s.push_back('(');
-                s.append(lop->to_latex_string());
-                s.append(" \\UNTIL ");
-                s.append(rop->to_latex_string());
-                s.push_back(')');
+            {
+                int u_idx = find_if_presented(definitions, (const Ltl*) this);
+                if (u_idx >= 0 && !(*this == *new_definition))
+                    s.append(DEFINITION_NAMES[u_idx]);
+                else
+                {
+                    s.push_back('(');
+                    s.append(lop->to_latex_string());
+                    s.append(" \\UNTIL ");
+                    s.append(rop->to_latex_string());
+                    s.push_back(')');
+                }
                 break;
+            }
 
             case Operator::R:
                 s.push_back('(');
@@ -310,7 +348,7 @@ public:
 
     void dump_to(FILE *f) const
     {
-        fprintf(f, "digraph G {\n");
+        fprintf(f, "digraph G {\trankdir=LR;\n");
         recursive_dump_to(f);
         fprintf(f, "}");
     }
@@ -344,7 +382,7 @@ public:
             case Operator::TRUE:
                 SET_AND_RETURN(Status::TRUE)
 
-            case Operator::FALSE: 
+            case Operator::FALSE:
                 SET_AND_RETURN(Status::FALSE)
 
             case Operator::NOT:
@@ -912,7 +950,19 @@ static void transform_ltl(ref_ptr<Ltl>& ltl, bool output = true)
     if (ltl->substitute_F() && output)
         fprintf(stdout, " = \\text{/ Выражаем F через U /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
     if (output)
+    {
+        std::vector<const Ltl*> definitions;
+        std::vector<const Ltl*> introduced_definitions;
+        ltl->find_untils(definitions);
+
+        for (int i = 0; i < definitions.size(); i++)
+        {
+            introduced_definitions.push_back(definitions[i]);
+            fprintf(stdout, " = \\text{/ Замена для удобства /}$$\n\t$$= %s", ltl->to_latex_string(introduced_definitions, definitions[i]).c_str());
+        }
+
         fprintf(stdout, "$$\n");
+    }
 }
 
 static void add_state(const ref_ptr<Ltl>& ltl, const std::vector<const Ltl*>& all, std::vector<Status> all_mask, std::vector<std::vector<Status>>& states)
