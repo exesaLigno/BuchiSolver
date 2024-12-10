@@ -1,4 +1,5 @@
 #include "ref_ptr.h"
+#include "split_tree.h"
 
 #include <cassert>
 #include <cstddef>
@@ -218,19 +219,31 @@ public:
         }
     }
 
-    void find_untils(std::vector<const Ltl*>& untils) const
+    // returns true if not presented "until" found in current subtree, false if not found 
+    bool find_nested_untils(std::vector<const Ltl*>& untils, std::vector<const Ltl*>& currently_found, bool first_call = true) const
     {
-        if (lhs())
-            lhs()->find_untils(untils);
-        if (rhs())
-            rhs()->find_untils(untils);
+        bool already_found = false;
 
-        if (kind() == Operator::U)
+        if (lhs())
+            already_found |= lhs()->find_nested_untils(untils, currently_found, false);
+        if (rhs())
+            already_found |= rhs()->find_nested_untils(untils, currently_found, false);
+
+        if (not first_call and kind() == Operator::U and not already_found and find_if_presented(untils, this) == -1)
+        {
             add_if_not_presented(untils, this);
+            add_if_not_presented(currently_found, this);
+            already_found = true;
+        }
+
+        return already_found;
     }
 
-    std::string to_latex_string(std::vector<const Ltl*> definitions = std::vector<const Ltl*>(), const Ltl* new_definition = nullptr)
+    std::string to_latex_string(std::vector<const Ltl*> definitions = std::vector<const Ltl*>(), std::vector<const Ltl*> just_announced = std::vector<const Ltl*>(), const Ltl* initial_ltl = nullptr) const
     {
+        if (initial_ltl and *this == *initial_ltl)
+            return "\\varphi";
+
         std::string s;
 
         switch (opc)
@@ -247,77 +260,86 @@ public:
 
             case Operator::IMPL:
                 s.push_back('(');
-                s.append(lop->to_latex_string());
+                s.append(lop->to_latex_string(definitions, just_announced));
                 s.append(" \\IMPL ");
-                s.append(rop->to_latex_string());
+                s.append(rop->to_latex_string(definitions, just_announced));
                 s.push_back(')');
                 break;
 
             case Operator::NOT:
                 s.append("\\NOT ");
-                s.append(lop->to_latex_string());
+                s.append(lop->to_latex_string(definitions, just_announced));
                 break;
 
             case Operator::G:
                 s.append("\\GLOBALLY ");
-                s.append(lop->to_latex_string());
+                s.append(lop->to_latex_string(definitions, just_announced));
                 break;
 
             case Operator::F:
                 s.append("\\FUTURE ");
-                s.append(lop->to_latex_string());
+                s.append(lop->to_latex_string(definitions, just_announced));
                 break;
 
             case Operator::X:
                 s.append("\\NEXT ");
-                s.append(lop->to_latex_string());
+                s.append(lop->to_latex_string(definitions, just_announced));
                 break;
 
             case Operator::AND:
                 s.push_back('(');
-                s.append(lop->to_latex_string());
+                s.append(lop->to_latex_string(definitions, just_announced));
                 s.append(" \\AND ");
-                s.append(rop->to_latex_string());
+                s.append(rop->to_latex_string(definitions, just_announced));
                 s.push_back(')');
                 break;
 
             case Operator::OR:
                 s.push_back('(');
-                s.append(lop->to_latex_string());
+                s.append(lop->to_latex_string(definitions, just_announced));
                 s.append(" \\OR ");
-                s.append(rop->to_latex_string());
+                s.append(rop->to_latex_string(definitions, just_announced));
                 s.push_back(')');
                 break;
 
             case Operator::U:
             {
-                int u_idx = find_if_presented(definitions, (const Ltl*) this);
-                if (u_idx >= 0 && !(*this == *new_definition))
-                    s.append(DEFINITION_NAMES[u_idx]);
+                int definition_idx = find_if_presented(definitions, (const Ltl*) this);
+                bool announced = find_if_presented(just_announced, (const Ltl*) this) >= 0;
+                if (definition_idx >= 0 and not announced)
+                    s.append(DEFINITION_NAMES[definition_idx]);
                 else
                 {
+                    if (definition_idx >= 0 and announced)
+                        s.append("\\overbrace{");
                     s.push_back('(');
-                    s.append(lop->to_latex_string());
+                    s.append(lop->to_latex_string(definitions, just_announced));
                     s.append(" \\UNTIL ");
-                    s.append(rop->to_latex_string());
+                    s.append(rop->to_latex_string(definitions, just_announced));
                     s.push_back(')');
+                    if (definition_idx >= 0 and announced)
+                    {
+                        s.append("}^{");
+                        s.append(DEFINITION_NAMES[definition_idx]);
+                        s.append("}");
+                    }
                 }
                 break;
             }
 
             case Operator::R:
                 s.push_back('(');
-                s.append(lop->to_latex_string());
+                s.append(lop->to_latex_string(definitions, just_announced));
                 s.append(" \\RELEASE ");
-                s.append(rop->to_latex_string());
+                s.append(rop->to_latex_string(definitions, just_announced));
                 s.push_back(')');
                 break;
 
             case Operator::W:
                 s.push_back('(');
-                s.append(lop->to_latex_string());
+                s.append(lop->to_latex_string(definitions, just_announced));
                 s.append(" \\WEAK ");
-                s.append(rop->to_latex_string());
+                s.append(rop->to_latex_string(definitions, just_announced));
                 s.push_back(')');
                 break;
         }
@@ -635,7 +657,6 @@ private:
     Operator opc;
     std::string name;
     ref_type lop, rop;
-    std::vector<const Ltl*> untils;
 };
 
 void ref_ptr_inc_ref(Ltl &x)
@@ -891,7 +912,7 @@ bool iterate_mask(std::vector<bool>& atoms_mask, const int mask_size)
         return true; // We can enter current iteration
     }
 
-    bool IS = true; // Iterate from start
+    bool IS = false; // Iterate from start
 
     for (int i = IS ? 0 : (mask_size - 1); IS ? (i < mask_size) : (i >= 0); i += IS ? 1 : -1)
     {
@@ -932,15 +953,20 @@ void get_all(const Ltl* ltl, std::vector<const Ltl*>& all)
     add_if_not_presented(all, ltl);
 }
 
-static void transform_ltl(ref_ptr<Ltl>& ltl, bool output = true)
+static std::vector<const Ltl*> transform_ltl(ref_ptr<Ltl>& ltl, bool output = true)
 {
+    std::vector<const Ltl*> definitions;
+
     if (output)
     {
         fprintf(stdout, "\tПреобразуем исходную формулу\n");
         fprintf(stdout, "\t$$\\varphi = %s", ltl->to_latex_string().c_str());
     }
-    if (ltl->introduce_X() && output)
-        fprintf(stdout, " = \\text{/ Заносим X внутрь операторов /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
+    while (ltl->introduce_X())
+    {
+        if (output)
+            fprintf(stdout, " = \\text{/ Заносим X внутрь операторов /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
+    }
     if (ltl->substitute_R() && output)
         fprintf(stdout, " = \\text{/ Выражаем R через U /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
     if (ltl->substitute_W() && output)
@@ -951,23 +977,30 @@ static void transform_ltl(ref_ptr<Ltl>& ltl, bool output = true)
         fprintf(stdout, " = \\text{/ Выражаем F через U /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
     if (output)
     {
-        std::vector<const Ltl*> definitions;
-        std::vector<const Ltl*> introduced_definitions;
-        ltl->find_untils(definitions);
-
-        for (int i = 0; i < definitions.size(); i++)
+        while (true)
         {
-            introduced_definitions.push_back(definitions[i]);
-            fprintf(stdout, " = \\text{/ Замена для удобства /}$$\n\t$$= %s", ltl->to_latex_string(introduced_definitions, definitions[i]).c_str());
+            std::vector<const Ltl*> just_announced;
+            bool found = ltl->find_nested_untils(definitions, just_announced);
+            if (found)
+                fprintf(stdout, " = $$\n\t$$= %s", ltl->to_latex_string(definitions, just_announced).c_str());
+            else
+            {
+                fprintf(stdout, " = $$\n\t$$= %s", ltl->to_latex_string(definitions).c_str());
+                break;
+            }
         }
 
         fprintf(stdout, "$$\n");
     }
+
+    return definitions;
 }
 
-static void add_state(const ref_ptr<Ltl>& ltl, const std::vector<const Ltl*>& all, std::vector<Status> all_mask, std::vector<std::vector<Status>>& states)
+static std::shared_ptr<Node<std::vector<Status>>> add_state(const ref_ptr<Ltl>& ltl, const std::vector<const Ltl*>& all, std::vector<Status> all_mask, std::vector<std::vector<Status>>& states)
 {
     Status result = ltl->calculate(all, all_mask);
+
+    std::shared_ptr<Node<std::vector<Status>>> current(new Node(all_mask));// = new Node(all_mask);
 
     int unknown_until_idx = -1;
     for (int i = 0; i < all.size(); i++)
@@ -982,13 +1015,15 @@ static void add_state(const ref_ptr<Ltl>& ltl, const std::vector<const Ltl*>& al
     if (unknown_until_idx >= 0)
     {
         all_mask[unknown_until_idx] = Status::FALSE;
-        add_state(ltl, all, all_mask, states);
+        current->set_first(add_state(ltl, all, all_mask, states));
         all_mask[unknown_until_idx] = Status::TRUE;
-        add_state(ltl, all, all_mask, states);
+        current->set_second(add_state(ltl, all, all_mask, states));
     }
 
     else
         states.push_back(all_mask);
+
+    return current;
 }
 
 static bool check_edge_rules(const std::vector<const Ltl*>& all, const std::vector<std::vector<Status>>& states, const int from, const int to)
@@ -1032,7 +1067,7 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
     ltl->dump_to(f);
     fclose(f);
 
-    transform_ltl(ltl);
+    auto definitions = transform_ltl(ltl);
 
     f = fopen("ltl_after_transform.dot", "w");
     ltl->dump_to(f);
@@ -1046,6 +1081,27 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
     get_atoms(ltl.get(), atoms);
     get_all(ltl.get(), all);
 
+    fprintf(stdout, "\n\tЗапишем таблицу истинности для независимых подформул: ");
+    for (int i = 0; i < atoms.size(); i++)
+    {
+        fprintf(stdout, "$%s$", atoms[i]->to_latex_string().c_str());
+        if (i == atoms.size() - 1)
+            fprintf(stdout, "\n");
+        else
+            fprintf(stdout, ", ");
+    }
+
+    fprintf(stdout, "\t\\begin{table}[h!]\n\t\t\\begin{tabular}{|");
+    for (int i = 0; i < atoms.size(); i++)
+        fprintf(stdout, "c|");
+    fprintf(stdout, "l|");
+    fprintf(stdout, "}\n\t\t\t\\hline\n\t\t\t");
+    for (auto atom : atoms)
+        fprintf(stdout, "$%s$ & ", atom->to_latex_string().c_str());
+    fprintf(stdout, "\\\\\n\t\t\t\\hline\n");
+
+    int state_counter = 0;
+
     while (iterate_mask(atoms_mask, atoms.size()))
     {
         std::vector<Status> all_mask;
@@ -1058,34 +1114,95 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
                 all_mask.push_back(Status::UNKNOWN);
         }
 
-        add_state(ltl, all, all_mask, states);
+        auto split_tree = add_state(ltl, all, all_mask, states);
+        //printf("nodes: %d, leafs: %d, depth: %d\n", split_tree->nodes_count(), split_tree->leafs_count(), split_tree->depth());
+
+        bool first_line = true;
+        int substates_count = states.size() - state_counter;
+        for (; state_counter < states.size(); state_counter++)
+        {
+            fprintf(stdout, "\t\t\t");
+
+            for (int i = 0; i < atoms.size(); i++)
+            {
+                if (first_line)
+                    fprintf(stdout, "\\multirow{%d}{*}{%d} & ", substates_count, atoms_mask[i] ? 1 : 0);
+                else
+                    fprintf(stdout, "&");
+            }
+
+            first_line = false;
+
+            fprintf(stdout, "$s_{%d}$: ", state_counter + 1);
+            bool first_iter = true;
+            for (int i = 0; i < states[state_counter].size(); i++)
+            {
+                if (states[state_counter][i] == Status::TRUE)
+                {
+                    if (not first_iter)
+                        fprintf(stdout, ", ");
+                    first_iter = false;
+                    fprintf(stdout, "$%s$", all[i]->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str());
+                }
+            }
+
+            if (first_iter)
+                fprintf(stdout, "\\O");
+
+            fprintf(stdout, " \\\\ \n");
+        }
+        fprintf(stdout, "\t\t\t\\hline\n");
     }
 
-    printf("States count is %d (%d atoms variants)\n", states.size(), (int)std::pow(2, atoms.size()));
+    fprintf(stdout, "\t\t\\end{tabular}\n\t\\end{table}\n");
+
+    //printf("States count is %d (%d atoms variants)\n", states.size(), (int)std::pow(2, atoms.size()));
 
     std::unique_ptr<Automaton> maton(new Automaton(states.size()));// = new Automaton(states.size());
 
+    fprintf(stdout, "\n\tНачальные состояния:\n\t$$\n\t\tI = \\{s: \\varphi \\in s\\} = ");
+
+    bool first_iter = true;
     int c = 1;
     for (int i = 0; i < states.size(); i++)
     {
         if (states[i].back() == Status::TRUE)
-            maton->mark_init(i);
-
-        std::string set;
-        for (int j = 0; j < states[i].size(); j++)
         {
-            if (states[i][j] == Status::TRUE)
-            {
-                if (!set.empty())
-                    set.append(", ");
-                
-                std::string tmp;
-                all[j]->to_string(tmp);
-                set.append(tmp);
-            }
+            maton->mark_init(i);
+            if (not first_iter)
+                fprintf(stdout, ", ");
+            first_iter = false;
+            fprintf(stdout, "%d", i + 1);
         }
-        printf("s_%d: {%s}\n", i, set.c_str());
+
+        // std::string set;
+        // for (int j = 0; j < states[i].size(); j++)
+        // {
+        //     if (states[i][j] == Status::TRUE)
+        //     {
+        //         if (!set.empty())
+        //             set.append(", ");
+                
+        //         std::string tmp;
+        //         all[j]->to_string(tmp);
+        //         set.append(tmp);
+        //     }
+        // }
+        // printf("s_%d: {%s}\n", i, set.c_str());
     }
+
+    fprintf(stdout, "\n\t$$\n");
+
+    int U_count;
+    for (auto l : all)
+    {
+        if (l->kind() == Operator::U)
+            U_count++;
+    }
+
+    fprintf(stdout, "\n\tВ формуле имеется %d операций $\\UNTIL$, таким образом"
+            " будет %d множеств допускающих состояний: \n", 
+            U_count, U_count);
 
     int set_no = 0;
     for (auto l : all)
@@ -1097,14 +1214,30 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
             l->kind() == Operator::W)
         {
             auto right = (l->kind() == Operator::F || l->kind() == Operator::G) ? l->lhs() : l->rhs();
+
+            fprintf(stdout, "\n\t$$\n\t\tF_{%s} = \\{s: %s \\in s \\OR %s \\notin s \\} = ", 
+                    l->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str(), 
+                    right->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str(), 
+                    l->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str());
+
             int u_idx = find_if_presented(all, l);
             int u_rhs_idx = find_if_presented(all, right);
 
+            bool first_iter = true;
             for (int i = 0; i < states.size(); i++)
             {
                 if (states[i][u_idx] == states[i][u_rhs_idx])
+                {
                     maton->mark_accept(set_no, i);
+
+                    if (!first_iter)
+                        fprintf(stdout, ", ");
+                    first_iter = false;
+                    fprintf(stdout, "%d", i + 1);
+                }
             }
+
+            fprintf(stdout, "\n\t$$\n");
 
             set_no++;
         }
@@ -1134,10 +1267,10 @@ int main(int argc, char *argv[])
     for (int i = 1; i < argc; ++i)
     {
         buchi = run_ltl_to_buchi(argv[i]);
-        if (buchi)
-        {
-            buchi->write_to(stdout);
-        }
+        // if (buchi)
+        // {
+        //     buchi->write_to(stdout);
+        // }
     }
     return 0;
 }
