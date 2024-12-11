@@ -1089,8 +1089,8 @@ std::string get_edge_restrictions(const std::vector<const Ltl*>& all, const std:
                 if (not restrictions.empty())
                     restrictions.append(" \\AND ");
                 restrictions.append(subltl->lhs()->to_latex_string(definitions, std::vector<const Ltl*>(), initial_ltl));
-                restrictions.append(state[find_if_presented(all, subltl->lhs())] == Status::TRUE ? " \\in " : " \\notin ");
-                restrictions.push_back('s');
+                restrictions.append(state[find_if_presented(all, subltl)] == Status::TRUE ? " \\in " : " \\notin ");
+                restrictions.append("s'");
                 break;
 
             case Operator::U:
@@ -1101,7 +1101,7 @@ std::string get_edge_restrictions(const std::vector<const Ltl*>& all, const std:
                         restrictions.append(" \\AND ");
                     restrictions.append(subltl->to_latex_string(definitions, std::vector<const Ltl*>(), initial_ltl));
                     restrictions.append(state[find_if_presented(all, subltl)] == Status::TRUE ? " \\in " : " \\notin ");
-                    restrictions.push_back('s');
+                    restrictions.append("s'");
                 }
                 break;
         }
@@ -1241,7 +1241,7 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
 
     std::unique_ptr<Automaton> maton(new Automaton(states.size()));// = new Automaton(states.size());
 
-    fprintf(stdout, "\n\tНачальные состояния:\n\n\t$$\n\t\tI = \\{s: \\varphi \\in s\\} = ");
+    fprintf(stdout, "\n\tНачальные состояния:\n\n\t$$\n\t\tI = \\{s: \\varphi \\in s\\} = \\{");
 
     bool first_iter = true;
     int c = 1;
@@ -1253,11 +1253,11 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
             if (not first_iter)
                 fprintf(stdout, ", ");
             first_iter = false;
-            fprintf(stdout, "%d", i + 1);
+            fprintf(stdout, "s_{%d}", i + 1);
         }
     }
 
-    fprintf(stdout, "\n\t$$\n");
+    fprintf(stdout, "\\}\n\t$$\n");
 
     int U_count = 0;
     for (auto l : all)
@@ -1281,7 +1281,7 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
         {
             auto right = (l->kind() == Operator::F || l->kind() == Operator::G) ? l->lhs() : l->rhs();
 
-            fprintf(stdout, "\n\t$$\n\t\tF_{%s} = \\{s: %s \\in s \\OR %s \\notin s \\} = ", 
+            fprintf(stdout, "\n\t$$\n\t\tF_{%s} = \\{s: %s \\in s \\OR %s \\notin s \\} = \\{", 
                     l->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str(), 
                     right->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str(), 
                     l->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str());
@@ -1299,17 +1299,20 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
                     if (!first_iter)
                         fprintf(stdout, ", ");
                     first_iter = false;
-                    fprintf(stdout, "%d", i + 1);
+                    fprintf(stdout, "s_{%d}", i + 1);
                 }
             }
 
-            fprintf(stdout, "\n\t$$\n");
+            fprintf(stdout, "\\}\n\t$$\n");
 
             set_no++;
         }
     }
 
     fprintf(stdout, "\n\tВычислим переходы между узлами:\n\n");
+
+    std::vector<std::string> edge_rules;
+    std::vector<std::string> edge_definitions;
 
     for (int from = 0; from < states.size(); from++)
     {
@@ -1330,7 +1333,32 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
         else
             atoms_truth = "\\{" + atoms_truth + "\\}";
 
-        fprintf(stdout, "\t$$\n\t\t\\delta(s_{%d}, %s) = \\{%s\\} = ", from+1, atoms_truth.c_str(), get_edge_restrictions(all, states[from], definitions, ltl.get()).c_str());
+        auto rules = get_edge_restrictions(all, states[from], definitions, ltl.get());
+
+        int same_rules_idx = -1;
+        for (int i = 0; i < edge_rules.size(); i++)
+        {
+            if (edge_rules[i] == rules)
+            {
+                same_rules_idx = i;
+                break;
+            }
+        }
+
+        fprintf(stdout, "\t$$\n\t\t\\delta(s_{%d}, %s) = ", from+1, atoms_truth.c_str());
+
+        if (same_rules_idx == -1)
+        {
+            fprintf(stdout, "\\{s': %s\\} = \\{", rules.c_str());
+            edge_rules.push_back(rules);
+        }
+        else
+        {
+            fprintf(stdout, "%s = \\{", edge_definitions[same_rules_idx].c_str());
+            edge_rules.push_back("");
+        }
+
+        edge_definitions.push_back("\\delta(s_{" + std::to_string(from + 1) + "}, " + atoms_truth + ")");
 
         bool first_iter = true;
         for (int to = 0; to < states.size(); to++)
@@ -1341,11 +1369,11 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
                 if (not first_iter)
                     fprintf(stdout, ", ");
                 first_iter = false;
-                fprintf(stdout, "%d", to+1);
+                fprintf(stdout, "s_{%d}", to+1);
             }
         }
 
-        fprintf(stdout, "\n\t$$\n");
+        fprintf(stdout, "\\}\n\t$$\n");
     }
 
     FILE* automaton_dump_file = fopen("automaton.dot", "w");
