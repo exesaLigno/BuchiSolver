@@ -877,6 +877,57 @@ public:
         }
     }
 
+    void write_graph_to(FILE* f) const
+    {
+        fprintf(f, "digraph G {\n\tgraph[dpi = 400];\n\tlayout=\"circo\";\n\trankdir=TB;\n");
+        
+        // Creating dummy nodes for initial states
+        for (int i = 0; i < initial.size(); i++)
+            fprintf(f, "\tn%d[label=\"\",shape=none,height=.0,width=.0]\n", i);
+
+        fprintf(f, "\n");
+
+        // Creating state nodes
+        for (int i = 0; i < card(); i++)
+        {
+            fprintf(f, "\ts%d[shape=\"circle\"", i + 1);
+
+            bool is_accepting = false;
+            for (auto ac_vec : accepting)
+            {
+                for (auto ac : ac_vec)
+                {
+                    if (ac == i)
+                        is_accepting = true;
+                }
+            }
+
+            if (is_accepting)
+                fprintf(f, ", peripheries=2]\n");
+            else
+                fprintf(f, "]\n");
+        }
+
+        fprintf(f, "\n");
+
+        // Adding edges from nowhere to initial nodes
+        for (int i = 0; i < initial.size(); i++)
+            fprintf(f, "\tn%d->s%d\n", i, initial[i] + 1);
+
+        fprintf(f, "\n");
+
+        // Adding edges between nodes
+        for (int i = 0; i < adjacent.size(); i++)
+        {
+            for (auto j : adjacent[i])
+            {
+                fprintf(f, "\ts%d->s%d\n", i+1, j+1);
+            }
+        }
+
+        fprintf(f, "}\n");
+    }
+
     size_t card() const
     {
         return adjacent.size();
@@ -1026,6 +1077,39 @@ static std::shared_ptr<Node<std::vector<Status>>> add_state(const ref_ptr<Ltl>& 
     return current;
 }
 
+std::string get_edge_restrictions(const std::vector<const Ltl*>& all, const std::vector<Status>& state, const std::vector<const Ltl *> definitions, const Ltl* initial_ltl)
+{
+    std::string restrictions;
+
+    for (auto subltl : all)
+    {
+        switch (subltl->kind())
+        {
+            case Operator::X:
+                if (not restrictions.empty())
+                    restrictions.append(" \\AND ");
+                restrictions.append(subltl->lhs()->to_latex_string(definitions, std::vector<const Ltl*>(), initial_ltl));
+                restrictions.append(state[find_if_presented(all, subltl->lhs())] == Status::TRUE ? " \\in " : " \\notin ");
+                restrictions.push_back('s');
+                break;
+
+            case Operator::U:
+                if (state[find_if_presented(all, subltl->lhs())] == Status::TRUE &&
+                    state[find_if_presented(all, subltl->rhs())] == Status::FALSE)
+                {
+                    if (not restrictions.empty())
+                        restrictions.append(" \\AND ");
+                    restrictions.append(subltl->to_latex_string(definitions, std::vector<const Ltl*>(), initial_ltl));
+                    restrictions.append(state[find_if_presented(all, subltl)] == Status::TRUE ? " \\in " : " \\notin ");
+                    restrictions.push_back('s');
+                }
+                break;
+        }
+    }
+
+    return restrictions;
+}
+
 static bool check_edge_rules(const std::vector<const Ltl*>& all, const std::vector<std::vector<Status>>& states, const int from, const int to)
 {
     for (auto a : all)
@@ -1115,7 +1199,6 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
         }
 
         auto split_tree = add_state(ltl, all, all_mask, states);
-        //printf("nodes: %d, leafs: %d, depth: %d\n", split_tree->nodes_count(), split_tree->leafs_count(), split_tree->depth());
 
         bool first_line = true;
         int substates_count = states.size() - state_counter;
@@ -1147,7 +1230,7 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
             }
 
             if (first_iter)
-                fprintf(stdout, "\\O");
+                fprintf(stdout, "\\varnothing");
 
             fprintf(stdout, " \\\\ \n");
         }
@@ -1156,11 +1239,9 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
 
     fprintf(stdout, "\t\t\\end{tabular}\n\t\\end{table}\n");
 
-    //printf("States count is %d (%d atoms variants)\n", states.size(), (int)std::pow(2, atoms.size()));
-
     std::unique_ptr<Automaton> maton(new Automaton(states.size()));// = new Automaton(states.size());
 
-    fprintf(stdout, "\n\tНачальные состояния:\n\t$$\n\t\tI = \\{s: \\varphi \\in s\\} = ");
+    fprintf(stdout, "\n\tНачальные состояния:\n\n\t$$\n\t\tI = \\{s: \\varphi \\in s\\} = ");
 
     bool first_iter = true;
     int c = 1;
@@ -1174,26 +1255,11 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
             first_iter = false;
             fprintf(stdout, "%d", i + 1);
         }
-
-        // std::string set;
-        // for (int j = 0; j < states[i].size(); j++)
-        // {
-        //     if (states[i][j] == Status::TRUE)
-        //     {
-        //         if (!set.empty())
-        //             set.append(", ");
-                
-        //         std::string tmp;
-        //         all[j]->to_string(tmp);
-        //         set.append(tmp);
-        //     }
-        // }
-        // printf("s_%d: {%s}\n", i, set.c_str());
     }
 
     fprintf(stdout, "\n\t$$\n");
 
-    int U_count;
+    int U_count = 0;
     for (auto l : all)
     {
         if (l->kind() == Operator::U)
@@ -1243,20 +1309,48 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
         }
     }
 
+    fprintf(stdout, "\n\tВычислим переходы между узлами:\n\n");
+
     for (int from = 0; from < states.size(); from++)
     {
+        std::string atoms_truth;
+        for (int i = 0; i < atoms.size(); i++)
+        {
+            int atom_idx = find_if_presented(all, atoms[i]);
+            if (atom_idx >= 0 and states[from][atom_idx] == Status::TRUE)
+            {
+                if (not atoms_truth.empty())
+                    atoms_truth.append(", ");
+                atoms_truth.append(atoms[i]->to_latex_string());
+            }
+        }
+
+        if (atoms_truth.empty())
+            atoms_truth.append("\\varnothing");
+        else
+            atoms_truth = "\\{" + atoms_truth + "\\}";
+
+        fprintf(stdout, "\t$$\n\t\t\\delta(s_{%d}, %s) = \\{%s\\} = ", from+1, atoms_truth.c_str(), get_edge_restrictions(all, states[from], definitions, ltl.get()).c_str());
+
+        bool first_iter = true;
         for (int to = 0; to < states.size(); to++)
         {
             if (check_edge_rules(all, states, from, to))
+            {
                 maton->add_transition(from, to);
+                if (not first_iter)
+                    fprintf(stdout, ", ");
+                first_iter = false;
+                fprintf(stdout, "%d", to+1);
+            }
         }
+
+        fprintf(stdout, "\n\t$$\n");
     }
 
-    //maton->write_to(stdout);
-
-    // std::string f;
-    // ltl->to_string(f);
-    // fputs(f.c_str(), stderr);
+    FILE* automaton_dump_file = fopen("automaton.dot", "w");
+    maton->write_graph_to(automaton_dump_file);
+    fclose(automaton_dump_file);
     
     return maton;
 }
@@ -1267,10 +1361,10 @@ int main(int argc, char *argv[])
     for (int i = 1; i < argc; ++i)
     {
         buchi = run_ltl_to_buchi(argv[i]);
-        // if (buchi)
-        // {
-        //     buchi->write_to(stdout);
-        // }
+        if (buchi)
+        {
+            buchi->write_to(stdout);
+        }
     }
     return 0;
 }
