@@ -1,5 +1,6 @@
 #include "ref_ptr.h"
 #include "split_tree.h"
+#include "latex_export.h"
 
 #include <cassert>
 #include <cstddef>
@@ -1144,6 +1145,8 @@ static bool check_edge_rules(const std::vector<const Ltl*>& all, const std::vect
 
 static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
 {
+    write_preamble(stdout);
+
     Parser parser;
     ref_ptr<Ltl> ltl = parser.parse(text);
 
@@ -1379,6 +1382,8 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
     FILE* automaton_dump_file = fopen("automaton.dot", "w");
     maton->write_graph_to(automaton_dump_file);
     fclose(automaton_dump_file);
+
+    write_ending(stdout);
     
     return maton;
 }
@@ -1389,10 +1394,10 @@ int main(int argc, char *argv[])
     for (int i = 1; i < argc; ++i)
     {
         buchi = run_ltl_to_buchi(argv[i]);
-        if (buchi)
-        {
-            buchi->write_to(stdout);
-        }
+        // if (buchi)
+        // {
+        //     buchi->write_to(stdout);
+        // }
     }
     return 0;
 }
