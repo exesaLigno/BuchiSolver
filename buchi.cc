@@ -35,6 +35,8 @@ enum class Status : uint8_t
     UNKNOWN, TRUE, FALSE
 };
 
+using node_ptr = std::shared_ptr<Node<std::vector<Status>>>;
+
 static const struct
 {
     char sym;
@@ -1048,11 +1050,11 @@ static std::vector<const Ltl*> transform_ltl(ref_ptr<Ltl>& ltl, bool output = tr
     return definitions;
 }
 
-static std::shared_ptr<Node<std::vector<Status>>> add_state(const ref_ptr<Ltl>& ltl, const std::vector<const Ltl*>& all, std::vector<Status> all_mask, std::vector<std::vector<Status>>& states)
+static node_ptr add_state(const ref_ptr<Ltl>& ltl, const std::vector<const Ltl*>& all, std::vector<Status> all_mask, std::vector<std::vector<Status>>& states)
 {
     Status result = ltl->calculate(all, all_mask);
 
-    std::shared_ptr<Node<std::vector<Status>>> current(new Node(all_mask));// = new Node(all_mask);
+    node_ptr current(new Node(all_mask));
 
     int unknown_until_idx = -1;
     for (int i = 0; i < all.size(); i++)
@@ -1143,6 +1145,41 @@ static bool check_edge_rules(const std::vector<const Ltl*>& all, const std::vect
     return true;
 }
 
+void print_table_line(FILE* dst, const node_ptr& node, const std::vector<const Ltl*>& all, const std::vector<const Ltl *> definitions, const Ltl* initial_ltl, int column = 0, bool fill_start = false)
+{
+    if (fill_start)
+    {
+        for (int i = 0; i < column; i++)
+            fprintf(dst, " &");
+    }
+
+    std::string truth_list;
+    for (int i = 0; i < all.size(); i++)
+    {
+        if (node->data[i] == Status::TRUE)
+        {
+            if (not truth_list.empty())
+                truth_list.append(", ");
+
+            truth_list.append(all[i]->to_latex_string(definitions, std::vector<const Ltl*>(), initial_ltl));
+        }
+    }
+
+    fprintf(dst, "\\multirow{%d}{*}{$%s$}", node->leafs_count(), truth_list.c_str());
+
+    if (node->first)
+    {
+        fprintf(dst, " & ");
+        print_table_line(dst, node->first, all, definitions, initial_ltl, column+1);
+    }
+
+    else
+        fprintf(dst, "\\\\ \\cline{%d-%d} \n");
+
+    if (node->second)
+        print_table_line(dst, node->second, all, definitions, initial_ltl, column+1, true);
+}
+
 static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
 {
     write_preamble(stdout);
@@ -1187,8 +1224,6 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
         fprintf(stdout, "$%s$ & ", atom->to_latex_string().c_str());
     fprintf(stdout, "\\\\\n\t\t\t\\hline\n");
 
-    int state_counter = 0;
-
     while (iterate_mask(atoms_mask, atoms.size()))
     {
         std::vector<Status> all_mask;
@@ -1203,41 +1238,46 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
 
         auto split_tree = add_state(ltl, all, all_mask, states);
 
-        bool first_line = true;
-        int substates_count = states.size() - state_counter;
-        for (; state_counter < states.size(); state_counter++)
-        {
-            fprintf(stdout, "\t\t\t");
+        for (auto atom_state : atoms_mask)
+            fprintf(stdout, "\\multirow{%d}{*}{%d} & ", split_tree->leafs_count(), atom_state ? 1 : 0);
 
-            for (int i = 0; i < atoms.size(); i++)
-            {
-                if (first_line)
-                    fprintf(stdout, "\\multirow{%d}{*}{%d} & ", substates_count, atoms_mask[i] ? 1 : 0);
-                else
-                    fprintf(stdout, "&");
-            }
+        print_table_line(stdout, split_tree, all, definitions, ltl.get(), 3);
 
-            first_line = false;
+        // bool first_line = true;
+        // int substates_count = states.size() - state_counter;
+        // for (; state_counter < states.size(); state_counter++)
+        // {
+        //     fprintf(stdout, "\t\t\t");
 
-            fprintf(stdout, "$s_{%d}$: ", state_counter + 1);
-            bool first_iter = true;
-            for (int i = 0; i < states[state_counter].size(); i++)
-            {
-                if (states[state_counter][i] == Status::TRUE)
-                {
-                    if (not first_iter)
-                        fprintf(stdout, ", ");
-                    first_iter = false;
-                    fprintf(stdout, "$%s$", all[i]->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str());
-                }
-            }
+        //     for (int i = 0; i < atoms.size(); i++)
+        //     {
+        //         if (first_line)
+        //             fprintf(stdout, "\\multirow{%d}{*}{%d} & ", substates_count, atoms_mask[i] ? 1 : 0);
+        //         else
+        //             fprintf(stdout, "&");
+        //     }
 
-            if (first_iter)
-                fprintf(stdout, "\\varnothing");
+        //     first_line = false;
 
-            fprintf(stdout, " \\\\ \n");
-        }
-        fprintf(stdout, "\t\t\t\\hline\n");
+        //     fprintf(stdout, "$s_{%d}$: ", state_counter + 1);
+        //     bool first_iter = true;
+        //     for (int i = 0; i < states[state_counter].size(); i++)
+        //     {
+        //         if (states[state_counter][i] == Status::TRUE)
+        //         {
+        //             if (not first_iter)
+        //                 fprintf(stdout, ", ");
+        //             first_iter = false;
+        //             fprintf(stdout, "$%s$", all[i]->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str());
+        //         }
+        //     }
+
+        //     if (first_iter)
+        //         fprintf(stdout, "\\varnothing");
+
+        //     fprintf(stdout, " \\\\ \n");
+        // }
+        // fprintf(stdout, "\t\t\t\\hline\n");
     }
 
     fprintf(stdout, "\t\t\\end{tabular}\n\t\\end{table}\n");

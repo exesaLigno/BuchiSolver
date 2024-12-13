@@ -5,11 +5,11 @@
 template<class DATA>
 class Node
 {
+public:
     DATA data;
     std::shared_ptr<Node> first = nullptr;
     std::shared_ptr<Node> second = nullptr;
 
-public:
     Node(DATA data) : data(data) { }
 
     std::shared_ptr<Node> set_first(std::shared_ptr<Node> ref) { first = ref; return first; }
