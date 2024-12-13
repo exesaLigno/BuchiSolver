@@ -18,8 +18,7 @@ public:
     std::shared_ptr<Node> set_second(std::shared_ptr<Node> ref) { second = ref; return first; }
     std::shared_ptr<Node> set_second(DATA value) { second = new Node(value); return first; }
 
-    int nodes_count()
-    {
+    int nodes_count() const {
         int res = 1;
         if (first.get())
             res += first->nodes_count();
@@ -29,8 +28,7 @@ public:
         return res;
     }
 
-    int leafs_count()
-    {
+    int leafs_count() const {
         int res = (!first.get() && !second.get()) ? 1 : 0;
         if (first.get())
             res += first->leafs_count();
@@ -40,8 +38,7 @@ public:
         return res;
     }
 
-    int depth()
-    {
+    int depth() const {
         int first_depth = first.get() ? first->depth() + 1 : 0;
         int second_depth = second.get() ? second->depth() + 1 : 0;
 

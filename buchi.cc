@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <cstring>
 
 enum class Operator : uint8_t
 {
@@ -1007,44 +1008,44 @@ void get_all(const Ltl* ltl, std::vector<const Ltl*>& all)
     add_if_not_presented(all, ltl);
 }
 
-static std::vector<const Ltl*> transform_ltl(ref_ptr<Ltl>& ltl, bool output = true)
+static std::vector<const Ltl*> transform_ltl(ref_ptr<Ltl>& ltl, FILE* output_file = nullptr)
 {
     std::vector<const Ltl*> definitions;
 
-    if (output)
+    if (output_file)
     {
-        fprintf(stdout, "\tПреобразуем исходную формулу\n");
-        fprintf(stdout, "\t$$\\varphi = %s", ltl->to_latex_string().c_str());
+        fprintf(output_file, "\tПреобразуем исходную формулу\n");
+        fprintf(output_file, "\t$$\\varphi = %s", ltl->to_latex_string().c_str());
     }
     while (ltl->introduce_X())
     {
-        if (output)
-            fprintf(stdout, " = \\text{/ Заносим X внутрь операторов /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
+        if (output_file)
+            fprintf(output_file, " = \\text{/ Заносим X внутрь операторов /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
     }
-    if (ltl->substitute_R() && output)
-        fprintf(stdout, " = \\text{/ Выражаем R через U /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
-    if (ltl->substitute_W() && output)
-        fprintf(stdout, " = \\text{/ Выражаем W через U и G /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
-    if (ltl->substitute_G() && output)
-        fprintf(stdout, " = \\text{/ Выражаем G через F /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
-    if (ltl->substitute_F() && output)
-        fprintf(stdout, " = \\text{/ Выражаем F через U /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
-    if (output)
+    if (ltl->substitute_R() && output_file)
+        fprintf(output_file, " = \\text{/ Выражаем R через U /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
+    if (ltl->substitute_W() && output_file)
+        fprintf(output_file, " = \\text{/ Выражаем W через U и G /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
+    if (ltl->substitute_G() && output_file)
+        fprintf(output_file, " = \\text{/ Выражаем G через F /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
+    if (ltl->substitute_F() && output_file)
+        fprintf(output_file, " = \\text{/ Выражаем F через U /}$$\n\t$$= %s", ltl->to_latex_string().c_str());
+    if (output_file)
     {
         while (true)
         {
             std::vector<const Ltl*> just_announced;
             bool found = ltl->find_nested_untils(definitions, just_announced);
             if (found)
-                fprintf(stdout, " = $$\n\t$$= %s", ltl->to_latex_string(definitions, just_announced).c_str());
+                fprintf(output_file, " = $$\n\t$$= %s", ltl->to_latex_string(definitions, just_announced).c_str());
             else
             {
-                fprintf(stdout, " = $$\n\t$$= %s", ltl->to_latex_string(definitions).c_str());
+                fprintf(output_file, " = $$\n\t$$= %s", ltl->to_latex_string(definitions).c_str());
                 break;
             }
         }
 
-        fprintf(stdout, "$$\n");
+        fprintf(output_file, "$$\n");
     }
 
     return definitions;
@@ -1145,12 +1146,12 @@ static bool check_edge_rules(const std::vector<const Ltl*>& all, const std::vect
     return true;
 }
 
-void print_table_line(FILE* dst, const node_ptr& node, const std::vector<const Ltl*>& all, const std::vector<const Ltl *> definitions, const Ltl* initial_ltl, int column = 0, bool fill_start = false)
+void print_table_line(FILE* dst, const node_ptr& node, const std::vector<const Ltl*>& all, const std::vector<const Ltl *> definitions, const Ltl* initial_ltl, int& states_counter, int columns_count, int column = 0, bool fill_start = false)
 {
     if (fill_start)
     {
         for (int i = 0; i < column; i++)
-            fprintf(dst, " &");
+            fprintf(dst, "&");
     }
 
     std::string truth_list;
@@ -1165,24 +1166,34 @@ void print_table_line(FILE* dst, const node_ptr& node, const std::vector<const L
         }
     }
 
-    fprintf(dst, "\\multirow{%d}{*}{$%s$}", node->leafs_count(), truth_list.c_str());
+    if (node->first || node->second)
+        fprintf(dst, "\\multirow{%d}{*}{$%s$}", node->leafs_count(), truth_list.c_str());
+    else
+        fprintf(dst, "\\multirow{%d}{*}{$\\mathbf{s_{%d}}: %s$}", node->leafs_count(), states_counter++, truth_list.c_str());
 
     if (node->first)
     {
-        fprintf(dst, " & ");
-        print_table_line(dst, node->first, all, definitions, initial_ltl, column+1);
+        fprintf(dst, "&");
+        print_table_line(dst, node->first, all, definitions, initial_ltl, states_counter, columns_count, column+1);
     }
 
     else
-        fprintf(dst, "\\\\ \\cline{%d-%d} \n");
+    {
+        for (int i = column; i < columns_count - 1; i++)
+            fprintf(dst, "&");
+        fprintf(dst, "\\\\\n");
+    }
 
     if (node->second)
-        print_table_line(dst, node->second, all, definitions, initial_ltl, column+1, true);
+        print_table_line(dst, node->second, all, definitions, initial_ltl, states_counter, columns_count, column+1, true);
+
+    fprintf(dst, "\\cline{%d-%d}", column + 1, columns_count);
 }
 
-static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
+static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text, FILE* output_file = nullptr)
 {
-    write_preamble(stdout);
+    if (output_file)
+        write_preamble(output_file);
 
     Parser parser;
     ref_ptr<Ltl> ltl = parser.parse(text);
@@ -1191,7 +1202,7 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
     ltl->dump_to(f);
     fclose(f);
 
-    auto definitions = transform_ltl(ltl);
+    auto definitions = transform_ltl(ltl, output_file);
 
     f = fopen("ltl_after_transform.dot", "w");
     ltl->dump_to(f);
@@ -1205,25 +1216,22 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
     get_atoms(ltl.get(), atoms);
     get_all(ltl.get(), all);
 
-    fprintf(stdout, "\n\tЗапишем таблицу истинности для независимых подформул: ");
-    for (int i = 0; i < atoms.size(); i++)
+    if (output_file)
     {
-        fprintf(stdout, "$%s$", atoms[i]->to_latex_string().c_str());
-        if (i == atoms.size() - 1)
-            fprintf(stdout, "\n");
-        else
-            fprintf(stdout, ", ");
+        fprintf(output_file, "\n\tЗапишем таблицу истинности для независимых подформул: ");
+        for (int i = 0; i < atoms.size(); i++)
+        {
+            fprintf(output_file, "$%s$", atoms[i]->to_latex_string().c_str());
+            if (i == atoms.size() - 1)
+                fprintf(output_file, "\n");
+            else
+                fprintf(output_file, ", ");
+        }
     }
 
-    fprintf(stdout, "\t\\begin{table}[h!]\n\t\t\\begin{tabular}{|");
-    for (int i = 0; i < atoms.size(); i++)
-        fprintf(stdout, "c|");
-    fprintf(stdout, "l|");
-    fprintf(stdout, "}\n\t\t\t\\hline\n\t\t\t");
-    for (auto atom : atoms)
-        fprintf(stdout, "$%s$ & ", atom->to_latex_string().c_str());
-    fprintf(stdout, "\\\\\n\t\t\t\\hline\n");
+    std::vector<node_ptr> table_states;
 
+    int states_counter = 1;
     while (iterate_mask(atoms_mask, atoms.size()))
     {
         std::vector<Status> all_mask;
@@ -1237,81 +1245,99 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
         }
 
         auto split_tree = add_state(ltl, all, all_mask, states);
-
-        for (auto atom_state : atoms_mask)
-            fprintf(stdout, "\\multirow{%d}{*}{%d} & ", split_tree->leafs_count(), atom_state ? 1 : 0);
-
-        print_table_line(stdout, split_tree, all, definitions, ltl.get(), 3);
-
-        // bool first_line = true;
-        // int substates_count = states.size() - state_counter;
-        // for (; state_counter < states.size(); state_counter++)
-        // {
-        //     fprintf(stdout, "\t\t\t");
-
-        //     for (int i = 0; i < atoms.size(); i++)
-        //     {
-        //         if (first_line)
-        //             fprintf(stdout, "\\multirow{%d}{*}{%d} & ", substates_count, atoms_mask[i] ? 1 : 0);
-        //         else
-        //             fprintf(stdout, "&");
-        //     }
-
-        //     first_line = false;
-
-        //     fprintf(stdout, "$s_{%d}$: ", state_counter + 1);
-        //     bool first_iter = true;
-        //     for (int i = 0; i < states[state_counter].size(); i++)
-        //     {
-        //         if (states[state_counter][i] == Status::TRUE)
-        //         {
-        //             if (not first_iter)
-        //                 fprintf(stdout, ", ");
-        //             first_iter = false;
-        //             fprintf(stdout, "$%s$", all[i]->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str());
-        //         }
-        //     }
-
-        //     if (first_iter)
-        //         fprintf(stdout, "\\varnothing");
-
-        //     fprintf(stdout, " \\\\ \n");
-        // }
-        // fprintf(stdout, "\t\t\t\\hline\n");
+        table_states.push_back(split_tree);
     }
 
-    fprintf(stdout, "\t\t\\end{tabular}\n\t\\end{table}\n");
-
-    std::unique_ptr<Automaton> maton(new Automaton(states.size()));// = new Automaton(states.size());
-
-    fprintf(stdout, "\n\tНачальные состояния:\n\n\t$$\n\t\tI = \\{s: \\varphi \\in s\\} = \\{");
-
-    bool first_iter = true;
-    int c = 1;
-    for (int i = 0; i < states.size(); i++)
+    if (output_file)
     {
-        if (states[i].back() == Status::TRUE)
+        int max_depth = 0;
+        for (auto tree : table_states)
         {
-            maton->mark_init(i);
-            if (not first_iter)
-                fprintf(stdout, ", ");
-            first_iter = false;
-            fprintf(stdout, "s_{%d}", i + 1);
+            int depth = tree->depth() + atoms.size();
+            if (depth > max_depth)
+                max_depth = depth;
+        }
+
+        fprintf(output_file, "\t\\begin{table}[h!]\n\t\t\\begin{tabular}{|");
+        for (int i = 0; i < atoms.size(); i++)
+            fprintf(output_file, "c|");
+        for (int i = atoms.size(); i < max_depth; i++)
+            fprintf(output_file, "l|");
+
+        fprintf(output_file, "}\n\t\t\t\\hline\n\t\t\t");
+        for (int i = 0; i < max_depth; i++)
+        {
+            if (i < atoms.size())
+                fprintf(output_file, "$%s$", atoms[i]->to_latex_string().c_str());
+            else
+                fprintf(output_file, " ");
+            if (i != max_depth - 1)
+                fprintf(output_file, "&");
+        }
+        fprintf(output_file, "\\\\\n\t\t\t\\hline\n");
+
+        std::vector<bool> new_atoms_mask;
+        int spilt_tree_idx = 0;
+        while (iterate_mask(new_atoms_mask, atoms.size()))
+        {
+            auto split_tree = table_states[spilt_tree_idx++];
+
+            for (auto atom_state : new_atoms_mask)
+                fprintf(output_file, "\\multirow{%d}{*}{%d} & ", split_tree->leafs_count(), atom_state ? 1 : 0);
+
+            print_table_line(output_file, split_tree, all, definitions, ltl.get(), states_counter, max_depth, atoms.size());
+
+            fprintf(output_file, "\\hline\n");
+        }
+
+        fprintf(output_file, "\t\t\\end{tabular}\n\t\\end{table}\n");
+    }
+
+    std::unique_ptr<Automaton> maton(new Automaton(states.size()));
+
+    if (output_file)
+    {
+        fprintf(output_file, "\n\tНачальные состояния:\n\n\t$$\n\t\tI = \\{s: \\varphi \\in s\\} = \\{");
+
+        bool first_iter = true;
+        int c = 1;
+        for (int i = 0; i < states.size(); i++)
+        {
+            if (states[i].back() == Status::TRUE)
+            {
+                maton->mark_init(i);
+                if (not first_iter)
+                    fprintf(output_file, ", ");
+                first_iter = false;
+                fprintf(output_file, "s_{%d}", i + 1);
+            }
+        }
+
+        fprintf(output_file, "\\}\n\t$$\n");
+    }
+
+    else
+    {
+        for (int i = 0; i < states.size(); i++)
+        {
+            if (states[i].back() == Status::TRUE)
+                maton->mark_init(i);
         }
     }
 
-    fprintf(stdout, "\\}\n\t$$\n");
-
-    int U_count = 0;
-    for (auto l : all)
+    if (output_file)
     {
-        if (l->kind() == Operator::U)
-            U_count++;
-    }
+        int U_count = 0;
+        for (auto l : all)
+        {
+            if (l->kind() == Operator::U)
+                U_count++;
+        }
 
-    fprintf(stdout, "\n\tВ формуле имеется %d операций $\\UNTIL$, таким образом"
-            " будет %d множеств допускающих состояний: \n", 
-            U_count, U_count);
+        fprintf(output_file, "\n\tВ формуле имеется %d операций $\\UNTIL$, таким образом"
+                " будет %d множеств допускающих состояний: \n", 
+                U_count, U_count);
+    }
 
     int set_no = 0;
     for (auto l : all)
@@ -1324,10 +1350,11 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
         {
             auto right = (l->kind() == Operator::F || l->kind() == Operator::G) ? l->lhs() : l->rhs();
 
-            fprintf(stdout, "\n\t$$\n\t\tF_{%s} = \\{s: %s \\in s \\OR %s \\notin s \\} = \\{", 
-                    l->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str(), 
-                    right->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str(), 
-                    l->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str());
+            if (output_file)
+                fprintf(output_file, "\n\t$$\n\t\tF_{%s} = \\{s: %s \\in s \\OR %s \\notin s \\} = \\{", 
+                        l->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str(), 
+                        right->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str(), 
+                        l->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str());
 
             int u_idx = find_if_presented(all, l);
             int u_rhs_idx = find_if_presented(all, right);
@@ -1339,69 +1366,77 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
                 {
                     maton->mark_accept(set_no, i);
 
-                    if (!first_iter)
-                        fprintf(stdout, ", ");
-                    first_iter = false;
-                    fprintf(stdout, "s_{%d}", i + 1);
+                    if (output_file)
+                    {
+                        if (!first_iter)
+                            fprintf(output_file, ", ");
+                        first_iter = false;
+                        fprintf(output_file, "s_{%d}", i + 1);
+                    }
                 }
             }
 
-            fprintf(stdout, "\\}\n\t$$\n");
+            if (output_file)
+                fprintf(output_file, "\\}\n\t$$\n");
 
             set_no++;
         }
     }
 
-    fprintf(stdout, "\n\tВычислим переходы между узлами:\n\n");
+    if (output_file)
+        fprintf(output_file, "\n\tВычислим переходы между узлами:\n\n");
 
     std::vector<std::string> edge_rules;
     std::vector<std::string> edge_definitions;
 
     for (int from = 0; from < states.size(); from++)
     {
-        std::string atoms_truth;
-        for (int i = 0; i < atoms.size(); i++)
+        if (output_file)
         {
-            int atom_idx = find_if_presented(all, atoms[i]);
-            if (atom_idx >= 0 and states[from][atom_idx] == Status::TRUE)
+            std::string atoms_truth;
+            for (int i = 0; i < atoms.size(); i++)
             {
-                if (not atoms_truth.empty())
-                    atoms_truth.append(", ");
-                atoms_truth.append(atoms[i]->to_latex_string());
+                int atom_idx = find_if_presented(all, atoms[i]);
+                if (atom_idx >= 0 and states[from][atom_idx] == Status::TRUE)
+                {
+                    if (not atoms_truth.empty())
+                        atoms_truth.append(", ");
+                    atoms_truth.append(atoms[i]->to_latex_string());
+                }
             }
-        }
 
-        if (atoms_truth.empty())
-            atoms_truth.append("\\varnothing");
-        else
-            atoms_truth = "\\{" + atoms_truth + "\\}";
+            if (atoms_truth.empty())
+                atoms_truth.append("\\varnothing");
+            else
+                atoms_truth = "\\{" + atoms_truth + "\\}";
 
-        auto rules = get_edge_restrictions(all, states[from], definitions, ltl.get());
+            auto rules = get_edge_restrictions(all, states[from], definitions, ltl.get());
 
-        int same_rules_idx = -1;
-        for (int i = 0; i < edge_rules.size(); i++)
-        {
-            if (edge_rules[i] == rules)
+            int same_rules_idx = -1;
+            for (int i = 0; i < edge_rules.size(); i++)
             {
-                same_rules_idx = i;
-                break;
+                if (edge_rules[i] == rules)
+                {
+                    same_rules_idx = i;
+                    break;
+                }
             }
-        }
 
-        fprintf(stdout, "\t$$\n\t\t\\delta(s_{%d}, %s) = ", from+1, atoms_truth.c_str());
+            fprintf(output_file, "\t$$\n\t\t\\delta(s_{%d}, %s) = ", from+1, atoms_truth.c_str());
 
-        if (same_rules_idx == -1)
-        {
-            fprintf(stdout, "\\{s': %s\\} = \\{", rules.c_str());
-            edge_rules.push_back(rules);
-        }
-        else
-        {
-            fprintf(stdout, "%s = \\{", edge_definitions[same_rules_idx].c_str());
-            edge_rules.push_back("");
-        }
+            if (same_rules_idx == -1)
+            {
+                fprintf(output_file, "\\{s': %s\\} = \\{", rules.c_str());
+                edge_rules.push_back(rules);
+            }
+            else
+            {
+                fprintf(output_file, "%s = \\{", edge_definitions[same_rules_idx].c_str());
+                edge_rules.push_back("");
+            }
 
-        edge_definitions.push_back("\\delta(s_{" + std::to_string(from + 1) + "}, " + atoms_truth + ")");
+            edge_definitions.push_back("\\delta(s_{" + std::to_string(from + 1) + "}, " + atoms_truth + ")");
+        }
 
         bool first_iter = true;
         for (int to = 0; to < states.size(); to++)
@@ -1409,35 +1444,54 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text)
             if (check_edge_rules(all, states, from, to))
             {
                 maton->add_transition(from, to);
-                if (not first_iter)
-                    fprintf(stdout, ", ");
-                first_iter = false;
-                fprintf(stdout, "s_{%d}", to+1);
+                if (output_file)
+                {
+                    if (not first_iter)
+                        fprintf(output_file, ", ");
+                    first_iter = false;
+                    fprintf(output_file, "s_{%d}", to+1);
+                }
             }
         }
 
-        fprintf(stdout, "\\}\n\t$$\n");
+        if (output_file)
+            fprintf(output_file, "\\}\n\t$$\n");
     }
 
     FILE* automaton_dump_file = fopen("automaton.dot", "w");
     maton->write_graph_to(automaton_dump_file);
     fclose(automaton_dump_file);
 
-    write_ending(stdout);
+    if (output_file)
+        write_ending(output_file);
     
     return maton;
 }
 
 int main(int argc, char *argv[])
 {
-    std::unique_ptr<Automaton> buchi;
-    for (int i = 1; i < argc; ++i)
+    int ltl_idx = 0;
+    int output_file_idx = 0;
+
+    for (int i = 1; i < argc; i++)
     {
-        buchi = run_ltl_to_buchi(argv[i]);
-        // if (buchi)
-        // {
-        //     buchi->write_to(stdout);
-        // }
+        if (!strcmp(argv[i], "-o"))
+            output_file_idx = ++i;
+
+        else
+            ltl_idx = i;
     }
+
+    bool output_provided = output_file_idx != 0;
+
+    FILE* output = output_provided ? fopen(argv[output_file_idx], "w") : stdout;
+
+    auto buchi = run_ltl_to_buchi(argv[1], output);
+
+    if (output_provided)
+    {
+        fclose(output);
+    }
+
     return 0;
 }
