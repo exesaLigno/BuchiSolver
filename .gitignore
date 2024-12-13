@@ -2,3 +2,6 @@ buchi
 *.out
 *.dot
 .vscode
+*.pdf
+*.aux
+*.log

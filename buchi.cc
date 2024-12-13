@@ -11,6 +11,7 @@
 #include <vector>
 #include <cmath>
 #include <cstring>
+#include <unistd.h>
 
 enum class Operator : uint8_t
 {
@@ -1482,15 +1483,61 @@ int main(int argc, char *argv[])
             ltl_idx = i;
     }
 
-    bool output_provided = output_file_idx != 0;
+    FILE* output = stdout;
+    char* tex_name = nullptr;
 
-    FILE* output = output_provided ? fopen(argv[output_file_idx], "w") : stdout;
+    if (output_file_idx != 0)
+    {
+        tex_name = new char[strlen(argv[output_file_idx]) + 1 + 4];
+        strcpy(tex_name, argv[output_file_idx]);
+
+        char* last_dot = strrchr(tex_name, '.');
+        if (last_dot == nullptr)
+            strcat(tex_name, ".tex");
+
+        else if (!strcmp(last_dot, ".pdf"))
+            strcpy(last_dot, ".tex");
+
+        else if (!strcmp(last_dot, ".tex"));
+
+        else
+            strcat(tex_name, ".tex");
+
+        output = fopen(tex_name, "w");
+    }
 
     auto buchi = run_ltl_to_buchi(argv[1], output);
 
-    if (output_provided)
+    if (output_file_idx != 0)
     {
         fclose(output);
+
+        char* cmd = new char[strlen(tex_name) + sizeof("pdflatex ") + 1];
+        strcpy(cmd, "pdflatex ");
+        strcat(cmd, tex_name);
+
+        int res = system(cmd);
+
+        if (res == -1)
+            printf("Can not find pdflatex, result exported to `%s` but not compiled\n", tex_name);
+
+        else if (res != 0)
+            printf("Error occured while compiling `%s`\n", tex_name);
+
+        else
+        {
+            char* extension = strrchr(tex_name, '.');
+            remove(tex_name);
+            strcpy(extension, ".aux");
+            remove(tex_name);
+            strcpy(extension, ".log");
+            remove(tex_name);
+            strcpy(extension, ".out");
+            remove(tex_name);
+        }
+
+        delete[] tex_name;
+        delete[] cmd;
     }
 
     return 0;
