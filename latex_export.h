@@ -3,7 +3,7 @@
 
 void write_preamble(FILE* dst)
 {
-    fprintf(dst, "\\documentclass[a3paper, 10pt]{article}\n"
+    fprintf(dst, "\\documentclass[a2paper, 9pt]{article}\n"
                  "\\usepackage[T2A]{fontenc}\n"
                  "\\usepackage[utf8]{inputenc}\n"
                  "\\usepackage[english,russian]{babel}\n"
