@@ -1,6 +1,6 @@
-#include "ref_ptr.h"
 #include "split_tree.h"
 #include "latex_export.h"
+#include "vector_extesions.h"
 
 #include <cassert>
 #include <cstddef>
@@ -99,66 +99,39 @@ static Operator opcode_of(char c)
     return Operator::FALSE;
 }
 
-template<class T>
-void add_if_not_presented(std::vector<T*>& vector, T* to_add)
-{
-    for (auto ltl : vector)
-    {
-        if (*to_add == *ltl)
-            return;
-    }
-
-    vector.push_back(to_add);
-}
-
-template<class T>
-int find_if_presented(const std::vector<T>& vector, const T to_found)
-{
-    for (int i = 0; i < vector.size(); i++)
-    {
-        if (*to_found == *(vector[i]))
-            return i;
-    }
-
-    return -1;
-}
-
 class Ltl
 {
-    friend void ref_ptr_inc_ref(Ltl &);
-    friend void ref_ptr_release(Ltl &);
-
 public:
-    using ref_type = ref_ptr<Ltl>;
+    using Ltl_ptr = std::shared_ptr<Ltl>;
 
-    static ref_type True()
+    static Ltl_ptr True()
     {
-        static const ref_type ltl_true = new Ltl(Operator::TRUE);
+        static const Ltl_ptr ltl_true = Ltl_ptr(new Ltl(Operator::TRUE));
         return ltl_true;
     }
 
-    static ref_type False()
+    static Ltl_ptr False()
     {
-        static const ref_type ltl_false = new Ltl(Operator::FALSE);
+        static const Ltl_ptr ltl_false = Ltl_ptr(new Ltl(Operator::FALSE));
         return ltl_false;
     }
 
-    static ref_type atom(std::string name)
+    static Ltl_ptr atom(std::string name)
     {
-        return new Ltl(std::move(name));
+        return Ltl_ptr(new Ltl(std::move(name)));
     }
 
-    static ref_type unary(Operator opc, const ref_type &opnd)
+    static Ltl_ptr unary(Operator opc, const Ltl_ptr &opnd)
     {
-        ref_type ltl = new Ltl(opc);
+        Ltl_ptr ltl = Ltl_ptr(new Ltl(opc));
         ltl->lop = opnd;
 
         return ltl;
     }
 
-    static ref_type binary(Operator opc, const ref_type &lop, const ref_type &rop)
+    static Ltl_ptr binary(Operator opc, const Ltl_ptr &lop, const Ltl_ptr &rop)
     {
-        ref_type ltl = new Ltl(opc);
+        Ltl_ptr ltl = Ltl_ptr(new Ltl(opc));
         ltl->lop = lop;
         ltl->rop = rop;
 
@@ -663,36 +636,24 @@ private:
     int nref;
     Operator opc;
     std::string name;
-    ref_type lop, rop;
+    Ltl_ptr lop, rop;
 };
-
-void ref_ptr_inc_ref(Ltl &x)
-{
-    ++x.nref;
-}
-
-void ref_ptr_release(Ltl &x)
-{
-    --x.nref;
-    if (x.nref <= 0)
-    {
-        delete &x;
-    }
-}
 
 class Parser
 {
+    using Ltl_ptr = std::shared_ptr<Ltl>;
+
     const char *stream;
-    std::vector<ref_ptr<Ltl>> stack;
+    std::vector<Ltl_ptr> stack;
 
 public:
-    ref_ptr<Ltl> parse(const char *s)
+    Ltl_ptr parse(const char *s)
     {
         stream = s;
         parse_until('\0');
 
         assert(stack.size() == 1);
-        ref_ptr<Ltl> ltl = stack.back();
+        Ltl_ptr ltl = stack.back();
         stack.pop_back();
 
         return ltl;
@@ -725,7 +686,7 @@ private:
         stream = s;
     }
 
-    ref_ptr<Ltl> parse_atom()
+    Ltl_ptr parse_atom()
     {
         const char *end = stream;
         while (*end && islower(*end))
@@ -795,21 +756,21 @@ private:
     void parse1(Operator opc)
     {
         parse_term();
-        ref_ptr<Ltl> ltl = pop();
+        Ltl_ptr ltl = pop();
         stack.push_back(Ltl::unary(opc, ltl));
     }
 
     void parse2(Operator opc)
     {
         parse_term();
-        ref_ptr<Ltl> rop = pop();
-        ref_ptr<Ltl> lop = pop();
+        Ltl_ptr rop = pop();
+        Ltl_ptr lop = pop();
         stack.push_back(Ltl::binary(opc, lop, rop));
     }
 
-    ref_ptr<Ltl> pop()
+    Ltl_ptr pop()
     {
-        ref_ptr<Ltl> ltl = stack.back();
+        Ltl_ptr ltl = stack.back();
         stack.pop_back();
         return ltl;
     }
@@ -1011,7 +972,7 @@ void get_all(const Ltl* ltl, std::vector<const Ltl*>& all)
     add_if_not_presented(all, ltl);
 }
 
-static std::vector<const Ltl*> transform_ltl(ref_ptr<Ltl>& ltl, FILE* output_file = nullptr)
+static std::vector<const Ltl*> transform_ltl(std::shared_ptr<Ltl>& ltl, FILE* output_file = nullptr)
 {
     std::vector<const Ltl*> definitions;
 
@@ -1054,7 +1015,7 @@ static std::vector<const Ltl*> transform_ltl(ref_ptr<Ltl>& ltl, FILE* output_fil
     return definitions;
 }
 
-static node_ptr add_state(const ref_ptr<Ltl>& ltl, const std::vector<const Ltl*>& all, std::vector<Status> all_mask, std::vector<std::vector<Status>>& states)
+static node_ptr add_state(const std::shared_ptr<Ltl>& ltl, const std::vector<const Ltl*>& all, std::vector<Status> all_mask, std::vector<std::vector<Status>>& states)
 {
     Status result = ltl->calculate(all, all_mask);
 
@@ -1199,7 +1160,7 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text, FILE* outpu
         write_preamble(output_file);
 
     Parser parser;
-    ref_ptr<Ltl> ltl = parser.parse(text);
+    std::shared_ptr<Ltl> ltl = parser.parse(text);
 
     FILE* f = fopen("ltl_before_transform.dot", "w");
     ltl->dump_to(f);
