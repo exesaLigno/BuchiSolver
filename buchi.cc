@@ -13,6 +13,8 @@
 #include <cstring>
 #include <unistd.h>
 
+bool REVERSED_MASK = false;
+
 enum class Operator : uint8_t
 {
     TRUE,
@@ -968,7 +970,7 @@ bool iterate_mask(std::vector<bool>& atoms_mask, const int mask_size)
         return true; // We can enter current iteration
     }
 
-    bool IS = false; // Iterate from start
+    bool IS = REVERSED_MASK; // Iterate from start
 
     for (int i = IS ? 0 : (mask_size - 1); IS ? (i < mask_size) : (i >= 0); i += IS ? 1 : -1)
     {
@@ -1478,6 +1480,9 @@ int main(int argc, char *argv[])
     {
         if (!strcmp(argv[i], "-o"))
             output_file_idx = ++i;
+
+        else if (!strcmp(argv[i], "--reverse-mask") || !strcmp(argv[i], "-r"))
+            REVERSED_MASK = true;
 
         else
             ltl_idx = i;
