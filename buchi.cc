@@ -400,11 +400,11 @@ public:
                 break;
         }
 
-        if (all_mask[mask_idx] != Status::UNKNOWN)
-            return all_mask[mask_idx];
-
         auto l_status = lhs() ? lhs()->calculate(all, all_mask) : Status::UNKNOWN;
         auto r_status = rhs() ? rhs()->calculate(all, all_mask) : Status::UNKNOWN;
+
+        if (all_mask[mask_idx] != Status::UNKNOWN)
+            return all_mask[mask_idx];
 
         switch (kind())
         {
