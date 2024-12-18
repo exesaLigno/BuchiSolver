@@ -1,5 +1,5 @@
 #include "split_tree.h"
-#include "latex_export.h"
+#include "latex.h"
 #include "vector_extesions.h"
 
 #include <cassert>
@@ -209,10 +209,10 @@ public:
         if (rhs())
             already_found |= rhs()->find_nested_untils(untils, currently_found, false);
 
-        if (not first_call and kind() == Operator::U and not already_found and find_if_presented(untils, this) == -1)
+        if (not first_call and kind() == Operator::U and not already_found and find_if_presented_ptr(untils, this) == -1)
         {
-            add_if_not_presented(untils, this);
-            add_if_not_presented(currently_found, this);
+            add_if_not_presented_ptr(untils, this);
+            add_if_not_presented_ptr(currently_found, this);
             already_found = true;
         }
 
@@ -284,8 +284,8 @@ public:
 
             case Operator::U:
             {
-                int definition_idx = find_if_presented(definitions, (const Ltl*) this);
-                bool announced = find_if_presented(just_announced, (const Ltl*) this) >= 0;
+                int definition_idx = find_if_presented_ptr(definitions, (const Ltl*) this);
+                bool announced = find_if_presented_ptr(just_announced, (const Ltl*) this) >= 0;
                 if (definition_idx >= 0 and not announced)
                     s.append(DEFINITION_NAMES[definition_idx]);
                 else
@@ -958,7 +958,7 @@ void get_atoms(const Ltl* ltl, std::vector<const Ltl*>& atoms)
         get_atoms(ltl->rhs(), atoms);
 
     if (ltl->kind() == Operator::X || ltl->kind() == Operator::ATOM)
-        add_if_not_presented(atoms, ltl);
+        add_if_not_presented_ptr(atoms, ltl);
 }
 
 void get_all(const Ltl* ltl, std::vector<const Ltl*>& all)
@@ -969,7 +969,7 @@ void get_all(const Ltl* ltl, std::vector<const Ltl*>& all)
     if (ltl->rhs())
         get_all(ltl->rhs(), all);
 
-    add_if_not_presented(all, ltl);
+    add_if_not_presented_ptr(all, ltl);
 }
 
 static std::vector<const Ltl*> transform_ltl(std::shared_ptr<Ltl>& ltl, FILE* output_file = nullptr)
@@ -1057,18 +1057,18 @@ std::string get_edge_restrictions(const std::vector<const Ltl*>& all, const std:
                 if (not restrictions.empty())
                     restrictions.append(" \\AND ");
                 restrictions.append(subltl->lhs()->to_latex_string(definitions, std::vector<const Ltl*>(), initial_ltl));
-                restrictions.append(state[find_if_presented(all, subltl)] == Status::TRUE ? " \\in " : " \\notin ");
+                restrictions.append(state[find_if_presented_ptr(all, subltl)] == Status::TRUE ? " \\in " : " \\notin ");
                 restrictions.append("s'");
                 break;
 
             case Operator::U:
-                if (state[find_if_presented(all, subltl->lhs())] == Status::TRUE &&
-                    state[find_if_presented(all, subltl->rhs())] == Status::FALSE)
+                if (state[find_if_presented_ptr(all, subltl->lhs())] == Status::TRUE &&
+                    state[find_if_presented_ptr(all, subltl->rhs())] == Status::FALSE)
                 {
                     if (not restrictions.empty())
                         restrictions.append(" \\AND ");
                     restrictions.append(subltl->to_latex_string(definitions, std::vector<const Ltl*>(), initial_ltl));
-                    restrictions.append(state[find_if_presented(all, subltl)] == Status::TRUE ? " \\in " : " \\notin ");
+                    restrictions.append(state[find_if_presented_ptr(all, subltl)] == Status::TRUE ? " \\in " : " \\notin ");
                     restrictions.append("s'");
                 }
                 break;
@@ -1084,9 +1084,9 @@ static bool check_edge_rules(const std::vector<const Ltl*>& all, const std::vect
     {
         if (a->kind() == Operator::U)
         {
-            int u_idx = find_if_presented(all, a);
-            int u_lhs_idx = find_if_presented(all, a->lhs());
-            int u_rhs_idx = find_if_presented(all, a->rhs());
+            int u_idx = find_if_presented_ptr(all, a);
+            int u_lhs_idx = find_if_presented_ptr(all, a->lhs());
+            int u_rhs_idx = find_if_presented_ptr(all, a->rhs());
 
             if (!(
                 (states[from][u_idx] == Status::TRUE && states[from][u_rhs_idx] == Status::TRUE) ||  // p U q === true, q === true -> any succesor possible
@@ -1097,8 +1097,8 @@ static bool check_edge_rules(const std::vector<const Ltl*>& all, const std::vect
         }
         else if (a->kind() == Operator::X)
         {
-            int x_idx = find_if_presented(all, a);
-            int x_var_idx = find_if_presented(all, a->lhs());
+            int x_idx = find_if_presented_ptr(all, a);
+            int x_var_idx = find_if_presented_ptr(all, a->lhs());
 
             if (!(
                 states[from][x_idx] == states[to][x_var_idx]
@@ -1201,7 +1201,7 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text, FILE* outpu
         std::vector<Status> all_mask;
         for (auto cur_ltl : all)
         {
-            int found = find_if_presented(atoms, cur_ltl);
+            int found = find_if_presented_ptr(atoms, cur_ltl);
             if (found >= 0)
                 all_mask.push_back(atoms_mask[found] ? Status::TRUE : Status::FALSE);
             else
@@ -1320,8 +1320,8 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text, FILE* outpu
                         right->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str(), 
                         l->to_latex_string(definitions, std::vector<const Ltl*>(), ltl.get()).c_str());
 
-            int u_idx = find_if_presented(all, l);
-            int u_rhs_idx = find_if_presented(all, right);
+            int u_idx = find_if_presented_ptr(all, l);
+            int u_rhs_idx = find_if_presented_ptr(all, right);
 
             bool first_iter = true;
             for (int i = 0; i < states.size(); i++)
@@ -1360,7 +1360,7 @@ static std::unique_ptr<Automaton> run_ltl_to_buchi(const char *text, FILE* outpu
             std::string atoms_truth;
             for (int i = 0; i < atoms.size(); i++)
             {
-                int atom_idx = find_if_presented(all, atoms[i]);
+                int atom_idx = find_if_presented_ptr(all, atoms[i]);
                 if (atom_idx >= 0 and states[from][atom_idx] == Status::TRUE)
                 {
                     if (not atoms_truth.empty())

@@ -1,5 +1,17 @@
+#pragma once
+
+#include "vector_extesions.h"
+
 #include <cstdio>
 #include <cstdlib>
+#include <string>
+#include <vector>
+#include <map>
+
+inline std::string to_string(std::string_view string_view)
+{
+    return { string_view.begin(), string_view.end() };
+}
 
 void write_preamble(FILE* dst)
 {
@@ -53,3 +65,72 @@ void write_ending(FILE* dst)
 {
     fprintf(dst, "\n\\end{document}\n");
 }
+
+
+class TeXDocument
+{
+public:
+    class TeXPackage
+    {
+    private: 
+        std::string name;
+        std::vector<std::string> options;
+        std::map<std::string, std::string> named_options;
+
+    public:
+        TeXPackage(
+            std::string_view package_name,
+            std::vector<std::string_view> options_list = {},
+            std::map<std::string_view, std::string_view> named_options_map = {}) : name(package_name) 
+        {
+            for (auto option : options_list)
+                options.push_back(to_string(option));
+
+            for (auto& [option_name, option_value] : named_options_map)
+                named_options[to_string(option_name)] = to_string(option_value);
+        }
+        
+        void add_parameter(std::string_view option, std::string_view named_option_value = nullptr)
+        {
+            if (named_option_value.empty())
+                options.push_back(to_string(option));
+            else
+                named_options[to_string(option)] = to_string(named_option_value);
+        }
+
+        bool operator==(const TeXPackage& other)
+        {
+            if (name != other.name || options.size() != other.options.size() || named_options.size() != other.named_options.size())
+                return false;
+
+            return true;
+        }
+    };
+
+private:
+
+    std::string document_class;
+    std::string paper_size;
+    std::string font_size;
+    std::vector<TeXPackage> packages;
+
+public:
+
+    TeXDocument(std::string_view doc_class, std::string_view paper_size = nullptr, std::string_view font_size = nullptr) : document_class(doc_class), paper_size(paper_size), font_size(font_size) { }
+
+    void add_package(TeXPackage package)
+    {
+        add_if_not_presented(packages, package);
+    }
+
+    void add_package(std::string_view package_name, 
+        std::vector<std::string_view> options_list = {},
+        std::map<std::string_view, std::string_view> named_options_map = {})
+    {
+        add_if_not_presented(packages, TeXPackage(package_name, options_list, named_options_map));
+    }
+
+    void write_to(FILE* f)
+    {
+    }
+};
