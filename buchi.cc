@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 bool REVERSED_MASK = false;
+bool COMPACT_TABLE = false;
 
 enum class Operator : uint8_t
 {
@@ -1149,7 +1150,7 @@ static bool check_edge_rules(const std::vector<const Ltl*>& all, const std::vect
     return true;
 }
 
-void print_table_line(FILE* dst, const node_ptr& node, const std::vector<const Ltl*>& all, const std::vector<const Ltl *> definitions, const Ltl* initial_ltl, int& states_counter, int columns_count, int column = 0, bool fill_start = false)
+void print_table_line(FILE* dst, const node_ptr& node, const std::vector<const Ltl*>& all, const std::vector<const Ltl *> definitions, const Ltl* initial_ltl, int& states_counter, int columns_count, int column = 0, bool fill_start = false, const Node<std::vector<Status>>* parent = nullptr)
 {
     if (fill_start)
     {
@@ -1158,9 +1159,10 @@ void print_table_line(FILE* dst, const node_ptr& node, const std::vector<const L
     }
 
     std::string truth_list;
+
     for (int i = 0; i < all.size(); i++)
     {
-        if (node->data[i] == Status::TRUE)
+        if (node->data[i] == Status::TRUE && (!COMPACT_TABLE || !parent || parent->data[i] != Status::TRUE))
         {
             if (not truth_list.empty())
                 truth_list.append(", ");
@@ -1168,6 +1170,12 @@ void print_table_line(FILE* dst, const node_ptr& node, const std::vector<const L
             truth_list.append(all[i]->to_latex_string(definitions, std::vector<const Ltl*>(), initial_ltl));
         }
     }
+
+    if (truth_list.empty())
+        truth_list.append("\\varnothing");
+
+    if (COMPACT_TABLE && parent)
+        truth_list = "+ " + truth_list;
 
     if (node->first || node->second)
         fprintf(dst, "\\multirow{%d}{*}{$%s$}", node->leafs_count(), truth_list.c_str());
@@ -1177,7 +1185,7 @@ void print_table_line(FILE* dst, const node_ptr& node, const std::vector<const L
     if (node->first)
     {
         fprintf(dst, "&");
-        print_table_line(dst, node->first, all, definitions, initial_ltl, states_counter, columns_count, column+1);
+        print_table_line(dst, node->first, all, definitions, initial_ltl, states_counter, columns_count, column+1, false, node.get());
     }
 
     else
@@ -1188,7 +1196,7 @@ void print_table_line(FILE* dst, const node_ptr& node, const std::vector<const L
     }
 
     if (node->second)
-        print_table_line(dst, node->second, all, definitions, initial_ltl, states_counter, columns_count, column+1, true);
+        print_table_line(dst, node->second, all, definitions, initial_ltl, states_counter, columns_count, column+1, true, node.get());
 
     fprintf(dst, "\\cline{%d-%d}", column + 1, columns_count);
 }
@@ -1483,6 +1491,9 @@ int main(int argc, char *argv[])
 
         else if (!strcmp(argv[i], "--reverse-mask") || !strcmp(argv[i], "-r"))
             REVERSED_MASK = true;
+
+        else if (!strcmp(argv[i], "--compact") || !strcmp(argv[i], "-c"))
+            COMPACT_TABLE = true;
 
         else
             ltl_idx = i;
